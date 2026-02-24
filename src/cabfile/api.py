@@ -25,7 +25,7 @@ from .core import (
     main,
 )
 from .errors import CabFileError, CabPlatformError, CabinetError
-from .models import CabinetInfo, DecodeFATTime
+from .models import CabMember, CabinetInfo, DecodeFATTime
 
 CabSource = str | PathLike[str] | BinaryIO
 CabTargetDir = str | PathLike[str]
@@ -137,8 +137,8 @@ class CabFile:
         self._fdicopy_native(callback)
         return iter(names)
 
-    def members(self) -> Iterator[CabinetInfo]:
-        infos: list[CabinetInfo] = []
+    def members(self) -> Iterator[CabMember]:
+        infos: list[CabMember] = []
 
         def callback(fdint, pnotify):
             notify = pnotify.contents
@@ -155,7 +155,7 @@ class CabFile:
         self._fdicopy_native(callback)
         return iter(infos)
 
-    def get_member(self, name: str) -> CabinetInfo | None:
+    def get_member(self, name: str) -> CabMember | None:
         return self._archive.getinfo(name)
 
     def read(self, name: str) -> bytes:
