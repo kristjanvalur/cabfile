@@ -59,3 +59,34 @@ def truncated_cab(sample_single_cab: Path) -> Iterator[Path]:
         yield output
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+@pytest.fixture(params=["path", "fileobj"], ids=["path", "fileobj"])
+def cab_source_kind(request):
+    return request.param
+
+
+@pytest.fixture
+def single_cab_source(sample_single_cab: Path, cab_source_kind: str):
+    if cab_source_kind == "path":
+        yield str(sample_single_cab)
+        return
+
+    file_obj = sample_single_cab.open("rb")
+    try:
+        yield file_obj
+    finally:
+        file_obj.close()
+
+
+@pytest.fixture
+def multi_cab_source(sample_multi_cab: Path, cab_source_kind: str):
+    if cab_source_kind == "path":
+        yield str(sample_multi_cab)
+        return
+
+    file_obj = sample_multi_cab.open("rb")
+    try:
+        yield file_obj
+    finally:
+        file_obj.close()
