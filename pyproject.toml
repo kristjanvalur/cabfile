@@ -39,3 +39,6 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+markers = [
+  "requires_makecab: tests that require makecab.exe to generate CAB fixtures",
+]
