@@ -124,7 +124,7 @@ class CabFile:
         if archive is not None:
             archive.close()
 
-    def names(self) -> Iterable[str]:
+    def _list_names(self) -> list[str]:
         names: list[str] = []
 
         def callback(fdint, pnotify):
@@ -139,7 +139,7 @@ class CabFile:
         self._fdicopy_native(callback)
         return names
 
-    def members(self) -> Iterable[CabMember]:
+    def _list_members(self) -> list[CabMember]:
         infos: list[CabMember] = []
 
         def callback(fdint, pnotify):
@@ -157,7 +157,7 @@ class CabFile:
         self._fdicopy_native(callback)
         return infos
 
-    def get_member(self, name: str) -> CabMember | None:
+    def _find_member(self, name: str) -> CabMember | None:
         member: CabMember | None = None
 
         def callback(fdint, pnotify):
@@ -177,6 +177,32 @@ class CabFile:
 
         self._fdicopy_native(callback, err_success=lambda: member is not None)
         return member
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.keys())
+
+    def __len__(self) -> int:
+        return len(self.keys())
+
+    def __contains__(self, name: object) -> bool:
+        if not isinstance(name, str):
+            return False
+        return self._find_member(name) is not None
+
+    def __getitem__(self, name: str) -> CabMember:
+        member = self._find_member(name)
+        if member is None:
+            raise KeyError(name)
+        return member
+
+    def keys(self) -> Iterable[str]:
+        return self._list_names()
+
+    def values(self) -> Iterable[CabMember]:
+        return self._list_members()
+
+    def items(self) -> Iterable[tuple[str, CabMember]]:
+        return ((member.name, member) for member in self._list_members() if member.name is not None)
 
     def read(self, name: str) -> bytes:
         return self._archive.read(name)
