@@ -134,7 +134,7 @@ class CabFile:
                 pending_entry = pending_by_fd.pop(fd, None)
                 if pending_entry is None:
                     return 1
-                mapped = self.file_manager.unmap(fd)
+                self.file_manager.unmap(fd)
                 _, on_done = pending_entry
                 on_done()
                 return 1

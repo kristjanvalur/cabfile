@@ -13,9 +13,31 @@ import sys
 import os.path
 from io import BytesIO
 from contextlib import contextmanager
-from ctypes import *
+from ctypes import (
+    CFUNCTYPE,
+    POINTER,
+    Structure,
+    Union,
+    addressof,
+    byref,
+    c_char_p,
+    c_int,
+    c_long,
+    c_ssize_t,
+    c_uint,
+    c_ulong,
+    c_ushort,
+    c_void_p,
+    cdll,
+    create_string_buffer,
+    memmove,
+    py_object,
+    sizeof,
+    string_at,
+)
 from ctypes.wintypes import BOOL
 from functools import wraps
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from .errors import CabPlatformError, CabinetError
 from .models import CabinetInfo, DecodeFATTime
@@ -109,10 +131,10 @@ def CompressionLevelFromTCOMP(tc):
 def CompressionMemoryFromTCOMP(tc):
     return (((tc) & tcompMASK_QUANTUM_MEM) >> tcompSHIFT_QUANTUM_MEM)
 
-def TCOMPfromTypeLevelMemory(t,l,m):
-    return (((m) << tcompSHIFT_QUANTUM_MEM  ) |  \
-            ((l) << tcompSHIFT_QUANTUM_LEVEL) |  \
-             ( t                             ))
+def TCOMPfromTypeLevelMemory(t, level, memory):
+    return (((memory) << tcompSHIFT_QUANTUM_MEM  ) |  \
+            ((level) << tcompSHIFT_QUANTUM_LEVEL) |  \
+             ( t                                  ))
 
 def LZXCompressionWindowFromTCOMP(tc):
     return (((tc) & tcompMASK_LZX_WINDOW) >> tcompSHIFT_LZX_WINDOW)
@@ -224,6 +246,14 @@ class FDINOTIFICATION(Structure):
 FDINOTIFICATIONTYPE = _enum(["fdintCABINET_INFO", "fdintPARTIAL_FILE", "fdintCOPY_FILE",
                              "fdintCLOSE_FILE_INFO", "fdintNEXT_CABINET", "fdintENUMERATE"])
 
+# Explicit notification constants for static analysis and readability.
+fdintCABINET_INFO = 0
+fdintPARTIAL_FILE = 1
+fdintCOPY_FILE = 2
+fdintCLOSE_FILE_INFO = 3
+fdintNEXT_CABINET = 4
+fdintENUMERATE = 5
+
 
 PFNFDINOTIFY = CFUNCTYPE(INT_PTR, FDINOTIFICATIONTYPE, POINTER(FDINOTIFICATION))
 
@@ -293,7 +323,7 @@ def FileErrwrap(f):
     def helper(self, *args):
         try:
             return f(self, *args)
-        except BaseException as e:
+        except BaseException:
             self._excinfo[:] = sys.exc_info()
             return -1
 
@@ -395,7 +425,8 @@ class FDIFileManager(object):
     @FileErrwrap
     def pyopen(self, filename, mode, prot):
         amode = "w" if mode & 0x1 else "r"
-        if mode & 0x8000: amode += "b"
+        if mode & 0x8000:
+            amode += "b"
         f = open(filename, amode)
         return self.map(f)
 
@@ -407,9 +438,9 @@ class FDIFileManager(object):
     @FileErrwrap
     def pyread(self, fd, buffer, count):
         data = self.filemap[fd].read(count)
-        l = len(data)
-        memmove(buffer, data, l)
-        return l
+        data_length = len(data)
+        memmove(buffer, data, data_length)
+        return data_length
 
     @FileErrwrap
     def pywrite(self, fd, buffer, count):
