@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -110,3 +111,121 @@ def test_cabfile_visit_walk_and_abort(sample_multi_cab: Path):
 
         assert archive.visit(aborting_visitor) is False
         assert seen_abort == ["alpha.txt", "beta.txt"]
+
+
+def test_cabfile_visit_cab_stop_iteration(sample_multi_cab: Path):
+    with cabfile.CabFile(str(sample_multi_cab)) as archive:
+        seen: list[str] = []
+
+        def visitor(member, _data):
+            assert member.name is not None
+            seen.append(member.name)
+            if member.name == "beta.txt":
+                raise cabfile.CabStopIteration()
+            return True
+
+        assert archive.visit(visitor) is False
+        assert seen == ["alpha.txt", "beta.txt"]
+
+
+def test_cabfile_dispatch_low_level_and_file_manager(sample_multi_cab: Path):
+    with cabfile.CabFile(str(sample_multi_cab)) as archive:
+        names: list[str] = []
+
+        def on_copy_file(member):
+            assert member.name is not None
+            names.append(member.name)
+            return None
+
+        assert archive.dispatch(on_copy_file) is True
+        assert names == ["alpha.txt", "beta.txt", "gamma.txt"]
+
+        payloads: dict[str, bytes] = {}
+
+        class CaptureSink(BytesIO):
+            def __init__(self, member_name: str):
+                super().__init__()
+                self.member_name = member_name
+
+            def close(self):
+                if not self.closed:
+                    payloads[self.member_name] = self.getvalue()
+                super().close()
+
+        def on_copy_file_with_data(member):
+            assert member.name is not None
+            if member.name != "beta.txt":
+                return None
+
+            sink = CaptureSink(member.name)
+
+            def on_done():
+                sink.close()
+
+            return sink, on_done
+
+        assert archive.dispatch(on_copy_file_with_data) is True
+        assert payloads == {"beta.txt": b"beta\n"}
+
+        manager = archive.file_manager
+        temp = BytesIO()
+        with manager.mapped(temp) as fd:
+            assert fd in manager.filemap
+        assert fd not in manager.filemap
+        assert temp.closed
+
+
+def test_cabfile_dispatch_filelike_auto_mapping(sample_multi_cab: Path):
+    class CaptureSink(BytesIO):
+        def __init__(self):
+            super().__init__()
+            self.captured = b""
+
+        def close(self):
+            if not self.closed:
+                self.captured = self.getvalue()
+            super().close()
+
+    with cabfile.CabFile(str(sample_multi_cab)) as archive:
+        sink = CaptureSink()
+
+        def on_copy_file(member):
+            if member.name == "gamma.txt":
+                return sink, sink.close
+            return None
+
+        assert archive.dispatch(on_copy_file) is True
+        assert sink.closed
+        assert sink.captured == b"gamma\n"
+
+
+def test_cabfile_dispatch_filelike_with_on_close(sample_multi_cab: Path):
+    class CaptureSink(BytesIO):
+        def __init__(self):
+            super().__init__()
+            self.captured = b""
+
+        def close(self):
+            if not self.closed:
+                self.captured = self.getvalue()
+            super().close()
+
+    with cabfile.CabFile(str(sample_multi_cab)) as archive:
+        sink = CaptureSink()
+        closed = False
+
+        def on_copy_file(member):
+            if member.name != "alpha.txt":
+                return None
+
+            def on_close():
+                nonlocal closed
+                closed = True
+                sink.close()
+
+            return sink, on_close
+
+        assert archive.dispatch(on_copy_file) is True
+        assert sink.closed
+        assert sink.captured == b"alpha\n"
+        assert closed is True

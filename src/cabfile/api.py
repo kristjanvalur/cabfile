@@ -100,8 +100,8 @@ class CabFile:
 
         - Return ``None`` to skip member data copy.
         - Return ``(file_like, on_done)`` where ``file_like`` is writable and
-          ``on_done()`` runs after data is written and unmapped, but before
-          dispatch closes the file object.
+                    ``on_done()`` runs after data is written and unmapped. The callback
+                    owns finalization, including closing/reusing the file-like object.
 
         Raise ``CabStopIteration`` to stop traversal early. Returns ``False`` for
         early-stop, ``True`` otherwise.
@@ -138,7 +138,6 @@ class CabFile:
                 mapped = self.file_manager.unmap(fd)
                 _, on_done = pending_entry
                 on_done()
-                mapped.close()
                 return 1
             return -1
 
@@ -191,8 +190,11 @@ class CabFile:
             sink = BytesIO()
 
             def on_done() -> None:
-                if callback(member, sink.getvalue()) is False:
-                    raise CabStopIteration()
+                try:
+                    if callback(member, sink.getvalue()) is False:
+                        raise CabStopIteration()
+                finally:
+                    sink.close()
 
             return sink, on_done
 
