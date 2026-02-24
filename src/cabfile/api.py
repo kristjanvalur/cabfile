@@ -138,7 +138,22 @@ class CabFile:
         return iter(names)
 
     def members(self) -> Iterator[CabinetInfo]:
-        return iter(self._archive.infolist())
+        infos: list[CabinetInfo] = []
+
+        def callback(fdint, pnotify):
+            notify = pnotify.contents
+            if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
+                return 0
+            if fdint == fdintCOPY_FILE:
+                info = CabinetInfo(_to_text(notify.psz1), DecodeFATTime(notify.date, notify.time))
+                info.file_size = notify.cb
+                info.external_attr = notify.attribs
+                infos.append(info)
+                return 0
+            return -1
+
+        self._fdicopy_native(callback)
+        return iter(infos)
 
     def get_member(self, name: str) -> CabinetInfo | None:
         return self._archive.getinfo(name)
