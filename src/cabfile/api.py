@@ -32,10 +32,9 @@ from .models import CabMember, CabinetInfo, DecodeFATTime
 
 CabSource = str | PathLike[str] | BinaryIO
 CabTargetDir = str | PathLike[str]
-DispatchOnDone = Callable[[], None]
-DispatchCopyResult = tuple[BinaryIO, DispatchOnDone] | None
-DispatchCopyCallback = Callable[[CabMember], DispatchCopyResult]
-VisitCallback = Callable[[CabMember, bytes | None], bool | None]
+VisitOnDone = Callable[[], None]
+VisitCopyResult = tuple[BinaryIO, VisitOnDone] | None
+VisitCopyCallback = Callable[[CabMember], VisitCopyResult]
 
 
 class CabFile:
@@ -89,11 +88,11 @@ class CabFile:
         """Low-level FDI file manager for map/unmap and callback-backed I/O."""
         return self._file_manager
 
-    def dispatch(
+    def visit(
         self,
-        on_copy_file: DispatchCopyCallback,
+        on_copy_file: VisitCopyCallback,
     ) -> bool:
-        """Low-level FDICopy dispatch API.
+        """Low-level FDICopy visit API.
 
         For each member (``fdintCOPY_FILE``), ``on_copy_file`` is called with a
         ``CabMember`` instance.
@@ -171,57 +170,6 @@ class CabFile:
         finally:
             self.file_manager.close()
 
-    def _fdicopy_visit(
-        self,
-        callback: VisitCallback,
-        *,
-        with_data: bool,
-        predicate: Callable[[CabMember], bool] | None = None,
-    ) -> bool:
-        def on_copy_file(member: CabMember):
-            if predicate is not None and not predicate(member):
-                return None
-
-            if not with_data:
-                if callback(member, None) is False:
-                    raise CabStopIteration()
-                return None
-
-            sink = BytesIO()
-
-            def on_done() -> None:
-                try:
-                    if callback(member, sink.getvalue()) is False:
-                        raise CabStopIteration()
-                finally:
-                    sink.close()
-
-            return sink, on_done
-
-        return self.dispatch(on_copy_file)
-
-    def visit(
-        self,
-        callback: VisitCallback,
-        *,
-        with_data: bool = False,
-    ) -> bool:
-        """Visit each member and invoke ``callback(member, data_or_none)``.
-
-        Returns ``False`` when traversal is stopped early (callback returns
-        ``False`` or raises ``CabStopIteration``), otherwise ``True``.
-        """
-        return self._fdicopy_visit(callback, with_data=with_data)
-
-    def walk(
-        self,
-        callback: VisitCallback,
-        *,
-        with_data: bool = False,
-    ) -> bool:
-        """Alias for ``visit()``."""
-        return self.visit(callback, with_data=with_data)
-
     def __iter__(self) -> Iterator[str]:
         return iter(self.keys())
 
@@ -233,31 +181,27 @@ class CabFile:
             return False
         found = False
 
-        def callback(member: CabMember, _data: bytes | None) -> bool:
+        def on_copy_file(member: CabMember):
             nonlocal found
-            found = member.name == name
-            return not found
+            if member.name != name:
+                return None
+            found = True
+            raise CabStopIteration()
 
-        self._fdicopy_visit(
-            callback,
-            with_data=False,
-            predicate=lambda member: member.name == name,
-        )
+        self.visit(on_copy_file)
         return found
 
     def __getitem__(self, name: str) -> CabMember:
         member: CabMember | None = None
 
-        def callback(current: CabMember, _data: bytes | None) -> bool:
+        def on_copy_file(current: CabMember):
             nonlocal member
+            if current.name != name:
+                return None
             member = current
-            return False
+            raise CabStopIteration()
 
-        self._fdicopy_visit(
-            callback,
-            with_data=False,
-            predicate=lambda current: current.name == name,
-        )
+        self.visit(on_copy_file)
         if member is None:
             raise KeyError(name)
         return member
@@ -266,35 +210,35 @@ class CabFile:
         """Return member names in cabinet order."""
         names: list[str] = []
 
-        def callback(member: CabMember, _data: bytes | None) -> bool:
+        def on_copy_file(member: CabMember):
             if member.name is not None:
                 names.append(member.name)
-            return True
+            return None
 
-        self.visit(callback)
+        self.visit(on_copy_file)
         return names
 
     def values(self) -> Iterable[CabMember]:
         """Return member metadata objects in cabinet order."""
         members: list[CabMember] = []
 
-        def callback(member: CabMember, _data: bytes | None) -> bool:
+        def on_copy_file(member: CabMember):
             members.append(member)
-            return True
+            return None
 
-        self.visit(callback)
+        self.visit(on_copy_file)
         return members
 
     def items(self) -> Iterable[tuple[str, CabMember]]:
         """Return ``(name, member)`` pairs in cabinet order."""
         items: list[tuple[str, CabMember]] = []
 
-        def callback(member: CabMember, _data: bytes | None) -> bool:
+        def on_copy_file(member: CabMember):
             if member.name is not None:
                 items.append((member.name, member))
-            return True
+            return None
 
-        self.visit(callback)
+        self.visit(on_copy_file)
         return items
 
     def read(self, name: str) -> bytes:
@@ -304,16 +248,21 @@ class CabFile:
         """
         payload: bytes | None = None
 
-        def callback(_member: CabMember, data: bytes | None) -> bool:
-            nonlocal payload
-            payload = data
-            return False
+        def on_copy_file(member: CabMember):
+            if member.name != name:
+                return None
 
-        self._fdicopy_visit(
-            callback,
-            with_data=True,
-            predicate=lambda member: member.name == name,
-        )
+            sink = BytesIO()
+
+            def on_done() -> None:
+                nonlocal payload
+                payload = sink.getvalue()
+                sink.close()
+                raise CabStopIteration()
+
+            return sink, on_done
+
+        self.visit(on_copy_file)
         if payload is None:
             raise KeyError(name)
         return payload
@@ -330,16 +279,20 @@ class CabFile:
         requested_set = set(requested_names)
         by_name: dict[str, bytes] = {}
 
-        def callback(member: CabMember, data: bytes | None) -> bool:
-            if member.name is not None and data is not None:
-                by_name[member.name] = data
-            return True
+        def on_copy_file(member: CabMember):
+            if member.name is None or member.name not in requested_set:
+                return None
 
-        self._fdicopy_visit(
-            callback,
-            with_data=True,
-            predicate=lambda member: member.name in requested_set,
-        )
+            sink = BytesIO()
+            member_name = member.name
+
+            def on_done() -> None:
+                by_name[member_name] = sink.getvalue()
+                sink.close()
+
+            return sink, on_done
+
+        self.visit(on_copy_file)
 
         return iter((name, by_name[name]) for name in requested_names if name in by_name)
 
@@ -352,21 +305,23 @@ class CabFile:
         out_dir.mkdir(parents=True, exist_ok=True)
         wrote = False
 
-        def callback(member: CabMember, data: bytes | None) -> bool:
-            nonlocal wrote
-            if member.name is None or data is None:
-                return True
+        def on_copy_file(member: CabMember):
+            if member.name != name:
+                return None
+
             destination = out_dir / member.name
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(data)
-            wrote = True
-            return False
+            output_file = destination.open("wb")
 
-        self._fdicopy_visit(
-            callback,
-            with_data=True,
-            predicate=lambda member: member.name == name,
-        )
+            def on_done() -> None:
+                nonlocal wrote
+                wrote = True
+                output_file.close()
+                raise CabStopIteration()
+
+            return output_file, on_done
+
+        self.visit(on_copy_file)
         if not wrote:
             raise KeyError(name)
 
@@ -376,24 +331,36 @@ class CabFile:
         out_dir.mkdir(parents=True, exist_ok=True)
         selected = set(members) if members is not None else None
 
-        def callback(member: CabMember, data: bytes | None) -> bool:
-            if member.name is None or data is None:
-                return True
+        def on_copy_file(member: CabMember):
+            if member.name is None:
+                return None
+            if selected is not None and member.name not in selected:
+                return None
+
             destination = out_dir / member.name
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(data)
-            return True
+            output_file = destination.open("wb")
 
-        self._fdicopy_visit(
-            callback,
-            with_data=True,
-            predicate=None if selected is None else (lambda member: member.name in selected),
-        )
+            def on_done() -> None:
+                output_file.close()
+
+            return output_file, on_done
+
+        self.visit(on_copy_file)
 
     def test(self) -> bool:
-        """Test cabinet readability by visiting all members with data."""
+        """Test cabinet readability by copying all member data to a null sink."""
         try:
-            return self.visit(lambda _member, _data: True, with_data=True)
+            def on_copy_file(_member: CabMember):
+                sink = BytesIO()
+
+                def on_done() -> None:
+                    sink.close()
+
+                return sink, on_done
+
+            self.visit(on_copy_file)
+            return True
         except (CabinetError, IOError, OSError):
             return False
 

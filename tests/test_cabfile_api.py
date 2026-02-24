@@ -74,28 +74,31 @@ def test_cabfile_mapping_metadata_interface(sample_multi_cab: Path):
             _ = archive["missing.txt"]
 
 
-def test_cabfile_visit_walk_and_abort(sample_multi_cab: Path):
+def test_cabfile_visit_with_and_without_data_and_abort(sample_multi_cab: Path):
     with cabfile.CabFile(str(sample_multi_cab)) as archive:
-        seen_without_data: list[str] = []
+        seen_names: list[str] = []
 
-        def visitor(member, data):
+        def on_copy_name(member):
             assert member.name is not None
-            seen_without_data.append(member.name)
-            assert data is None
-            return True
+            seen_names.append(member.name)
+            return None
 
-        assert archive.visit(visitor) is True
-        assert seen_without_data == ["alpha.txt", "beta.txt", "gamma.txt"]
+        assert archive.visit(on_copy_name) is True
+        assert seen_names == ["alpha.txt", "beta.txt", "gamma.txt"]
 
         seen_with_data: list[tuple[str, bytes]] = []
 
-        def visitor_with_data(member, data):
+        def on_copy_file(member):
             assert member.name is not None
-            assert data is not None
-            seen_with_data.append((member.name, data))
-            return True
+            sink = BytesIO()
 
-        assert archive.walk(visitor_with_data, with_data=True) is True
+            def on_done():
+                seen_with_data.append((member.name, sink.getvalue()))
+                sink.close()
+
+            return sink, on_done
+
+        assert archive.visit(on_copy_file) is True
         assert seen_with_data == [
             ("alpha.txt", b"alpha\n"),
             ("beta.txt", b"beta\n"),
@@ -104,12 +107,14 @@ def test_cabfile_visit_walk_and_abort(sample_multi_cab: Path):
 
         seen_abort: list[str] = []
 
-        def aborting_visitor(member, _data):
+        def aborting_copy(member):
             assert member.name is not None
             seen_abort.append(member.name)
-            return member.name != "beta.txt"
+            if member.name == "beta.txt":
+                raise cabfile.CabStopIteration()
+            return None
 
-        assert archive.visit(aborting_visitor) is False
+        assert archive.visit(aborting_copy) is False
         assert seen_abort == ["alpha.txt", "beta.txt"]
 
 
@@ -117,18 +122,18 @@ def test_cabfile_visit_cab_stop_iteration(sample_multi_cab: Path):
     with cabfile.CabFile(str(sample_multi_cab)) as archive:
         seen: list[str] = []
 
-        def visitor(member, _data):
+        def on_copy_file(member):
             assert member.name is not None
             seen.append(member.name)
             if member.name == "beta.txt":
                 raise cabfile.CabStopIteration()
-            return True
+            return None
 
-        assert archive.visit(visitor) is False
+        assert archive.visit(on_copy_file) is False
         assert seen == ["alpha.txt", "beta.txt"]
 
 
-def test_cabfile_dispatch_low_level_and_file_manager(sample_multi_cab: Path):
+def test_cabfile_visit_low_level_and_file_manager(sample_multi_cab: Path):
     with cabfile.CabFile(str(sample_multi_cab)) as archive:
         names: list[str] = []
 
@@ -137,7 +142,7 @@ def test_cabfile_dispatch_low_level_and_file_manager(sample_multi_cab: Path):
             names.append(member.name)
             return None
 
-        assert archive.dispatch(on_copy_file) is True
+        assert archive.visit(on_copy_file) is True
         assert names == ["alpha.txt", "beta.txt", "gamma.txt"]
 
         payloads: dict[str, bytes] = {}
@@ -164,7 +169,7 @@ def test_cabfile_dispatch_low_level_and_file_manager(sample_multi_cab: Path):
 
             return sink, on_done
 
-        assert archive.dispatch(on_copy_file_with_data) is True
+        assert archive.visit(on_copy_file_with_data) is True
         assert payloads == {"beta.txt": b"beta\n"}
 
         manager = archive.file_manager
@@ -175,7 +180,7 @@ def test_cabfile_dispatch_low_level_and_file_manager(sample_multi_cab: Path):
         assert temp.closed
 
 
-def test_cabfile_dispatch_filelike_auto_mapping(sample_multi_cab: Path):
+def test_cabfile_visit_filelike_auto_mapping(sample_multi_cab: Path):
     class CaptureSink(BytesIO):
         def __init__(self):
             super().__init__()
@@ -194,12 +199,12 @@ def test_cabfile_dispatch_filelike_auto_mapping(sample_multi_cab: Path):
                 return sink, sink.close
             return None
 
-        assert archive.dispatch(on_copy_file) is True
+        assert archive.visit(on_copy_file) is True
         assert sink.closed
         assert sink.captured == b"gamma\n"
 
 
-def test_cabfile_dispatch_filelike_with_on_close(sample_multi_cab: Path):
+def test_cabfile_visit_filelike_with_on_close(sample_multi_cab: Path):
     class CaptureSink(BytesIO):
         def __init__(self):
             super().__init__()
@@ -225,7 +230,7 @@ def test_cabfile_dispatch_filelike_with_on_close(sample_multi_cab: Path):
 
             return sink, on_close
 
-        assert archive.dispatch(on_copy_file) is True
+        assert archive.visit(on_copy_file) is True
         assert sink.closed
         assert sink.captured == b"alpha\n"
         assert closed is True
