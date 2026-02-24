@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cabfile"
-version = "2.0.0pre1"
+version = "2.0.0rc1"
 description = "Windows cabinet (.cab) file reader"
 readme = "README.md"
 requires-python = ">=3.11"
