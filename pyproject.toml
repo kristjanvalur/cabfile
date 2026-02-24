@@ -34,8 +34,14 @@ packages = ["src/cabfile"]
 
 [dependency-groups]
 dev = [
+  "mypy>=1.11",
   "pytest>=8.0",
 ]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+files = ["src", "tests"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

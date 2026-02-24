@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Iterator
 from ctypes import byref
 from io import BytesIO
-import sys
 from os import PathLike
 from pathlib import Path
 from types import TracebackType
@@ -92,9 +91,8 @@ class CabFile:
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: TracebackType | None,
-    ) -> bool:
+    ) -> None:
         self.close()
-        return False
 
     def __del__(self):
         if FDIDestroy and hasattr(self, "_fdi_handle"):
@@ -129,7 +127,7 @@ class CabFile:
         """
         self._open()
         pending_by_fd: dict[int, tuple[BinaryIO, Callable[[], None]]] = {}
-        callback_exception = []
+        callback_exception: list[BaseException] = []
 
         def on_notify(fdint, pnotify):
             notify = pnotify.contents
@@ -165,8 +163,8 @@ class CabFile:
         def wrap(fdint, pnotify):
             try:
                 return on_notify(fdint, pnotify)
-            except Exception:
-                callback_exception[:] = sys.exc_info()
+            except Exception as exc:
+                callback_exception[:] = [exc]
                 return -1
 
         self._error_state.clear()
@@ -183,9 +181,9 @@ class CabFile:
             )
             if not result:
                 if callback_exception:
-                    if isinstance(callback_exception[1], CabStopIteration):
+                    if isinstance(callback_exception[0], CabStopIteration):
                         return False
-                    raise callback_exception[1]
+                    raise callback_exception[0]
                 self.file_manager.raise_error()
                 self._error_state.raise_error()
             return True
@@ -228,7 +226,7 @@ class CabFile:
             raise KeyError(name)
         return member
 
-    def keys(self) -> Iterable[str]:
+    def keys(self) -> list[str]:
         """Return member names in cabinet order."""
         names: list[str] = []
 
@@ -240,7 +238,7 @@ class CabFile:
         self.visit(on_copy_file)
         return names
 
-    def values(self) -> Iterable[CabMember]:
+    def values(self) -> list[CabMember]:
         """Return member metadata objects in cabinet order."""
         members: list[CabMember] = []
 
@@ -251,7 +249,7 @@ class CabFile:
         self.visit(on_copy_file)
         return members
 
-    def items(self) -> Iterable[tuple[str, CabMember]]:
+    def items(self) -> list[tuple[str, CabMember]]:
         """Return ``(name, member)`` pairs in cabinet order."""
         items: list[tuple[str, CabMember]] = []
 

@@ -21,7 +21,7 @@ def test_zipfile_read_and_extract_wrappers(multi_cab_source, tmp_path: Path):
         zip_path = archive.extract("beta.txt", str(selected_out))
         assert Path(zip_path).name == "beta.txt"
 
-        assert archive.extractall(str(all_out), members=["alpha.txt", "gamma.txt"]) is None
+        archive.extractall(str(all_out), members=["alpha.txt", "gamma.txt"])
 
     assert not (selected_out / "alpha.txt").exists()
     assert (selected_out / "beta.txt").read_bytes() == b"beta\n"

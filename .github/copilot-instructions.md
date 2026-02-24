@@ -5,6 +5,10 @@
 - Use `uv` for Python environment and command execution.
 - Prefer `uv run ...` for tests and scripts.
 - Keep changes small, focused, and commit in logical steps.
+- Keep CI checks green:
+	- `uvx ruff format --check .`
+	- `uvx ruff check .`
+	- `uv run mypy`
 
 ## Native crash debugging on Windows
 
