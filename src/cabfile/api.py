@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from ctypes import byref
+from io import BytesIO
 import os.path
 import sys
 from os import PathLike
+from pathlib import Path
 from types import TracebackType
 from typing import BinaryIO, Self
 
@@ -19,6 +21,7 @@ from .core import (
     PFNFDINOTIFY,
     _to_text,
     fdintCABINET_INFO,
+    fdintCLOSE_FILE_INFO,
     fdintCOPY_FILE,
     fdintENUMERATE,
     is_cabinetfile,
@@ -33,8 +36,6 @@ CabTargetDir = str | PathLike[str]
 
 class CabFile:
     def __init__(self, source: CabSource):
-        self._archive: CabinetFile
-        self._archive = CabinetFile(source)
         self._source = source
         self._a: FDIAllocator | None = None
         self._e: ERF | None = None
@@ -115,68 +116,79 @@ class CabFile:
         return False
 
     def __del__(self):
-        if FDIDestroy and (hasattr(self, "_archive") or hasattr(self, "_hfdi")):
+        if FDIDestroy and hasattr(self, "_hfdi"):
             self.close()
 
     def close(self) -> None:
         self._close_native()
-        archive = getattr(self, "_archive", None)
-        if archive is not None:
-            archive.close()
 
-    def _list_names(self) -> list[str]:
-        names: list[str] = []
+    def _fdicopy_visit_native(
+        self,
+        callback: Callable[[CabMember, bytes | None], bool | None],
+        *,
+        with_data: bool,
+        select: Callable[[CabMember], bool] | None = None,
+    ) -> bool:
+        aborted = False
+        pending: dict[int, tuple[CabMember, BytesIO]] = {}
 
-        def callback(fdint, pnotify):
+        def on_notify(fdint, pnotify):
+            nonlocal aborted
             notify = pnotify.contents
             if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
                 return 0
             if fdint == fdintCOPY_FILE:
-                names.append(_to_text(notify.psz1))
-                return 0
-            return -1
+                member = CabMember(_to_text(notify.psz1), DecodeFATTime(notify.date, notify.time))
+                member.file_size = notify.cb
+                member.external_attr = notify.attribs
 
-        self._fdicopy_native(callback)
-        return names
+                if select is not None and not select(member):
+                    return 0
 
-    def _list_members(self) -> list[CabMember]:
-        infos: list[CabMember] = []
+                if not with_data:
+                    if callback(member, None) is False:
+                        aborted = True
+                        return -1
+                    return 0
 
-        def callback(fdint, pnotify):
-            notify = pnotify.contents
-            if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
-                return 0
-            if fdint == fdintCOPY_FILE:
-                info = CabMember(_to_text(notify.psz1), DecodeFATTime(notify.date, notify.time))
-                info.file_size = notify.cb
-                info.external_attr = notify.attribs
-                infos.append(info)
-                return 0
-            return -1
+                sink = BytesIO()
+                fd = self._f.map(sink)
+                pending[fd] = (member, sink)
+                return fd
 
-        self._fdicopy_native(callback)
-        return infos
-
-    def _find_member(self, name: str) -> CabMember | None:
-        member: CabMember | None = None
-
-        def callback(fdint, pnotify):
-            nonlocal member
-            notify = pnotify.contents
-            if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
-                return 0
-            if fdint == fdintCOPY_FILE:
-                member_name = _to_text(notify.psz1)
-                if member_name == name:
-                    member = CabMember(member_name, DecodeFATTime(notify.date, notify.time))
-                    member.file_size = notify.cb
-                    member.external_attr = notify.attribs
+            if fdint == fdintCLOSE_FILE_INFO:
+                fd = int(notify.hf)
+                member_sink = pending.pop(fd, None)
+                if member_sink is None:
+                    return 1
+                member, sink = member_sink
+                self._f.unmap(fd)
+                data = sink.getvalue()
+                sink.close()
+                if callback(member, data) is False:
+                    aborted = True
                     return -1
-                return 0
+                return 1
             return -1
 
-        self._fdicopy_native(callback, err_success=lambda: member is not None)
-        return member
+        self._fdicopy_native(on_notify, err_success=lambda: aborted)
+        return not aborted
+
+    def visit(
+        self,
+        callback: Callable[[CabMember, bytes | None], bool | None],
+        *,
+        with_data: bool = False,
+    ) -> bool:
+        return self._fdicopy_visit_native(callback, with_data=with_data)
+
+    def walk(
+        self,
+        callback: Callable[[CabMember, bytes | None], bool | None],
+        *,
+        with_data: bool = False,
+    ) -> bool:
+        return self.visit(callback, with_data=with_data)
 
     def __iter__(self) -> Iterator[str]:
         return iter(self.keys())
@@ -187,25 +199,85 @@ class CabFile:
     def __contains__(self, name: object) -> bool:
         if not isinstance(name, str):
             return False
-        return self._find_member(name) is not None
+        found = False
+
+        def callback(member: CabMember, _data: bytes | None) -> bool:
+            nonlocal found
+            found = member.name == name
+            return not found
+
+        self._fdicopy_visit_native(
+            callback,
+            with_data=False,
+            select=lambda member: member.name == name,
+        )
+        return found
 
     def __getitem__(self, name: str) -> CabMember:
-        member = self._find_member(name)
+        member: CabMember | None = None
+
+        def callback(current: CabMember, _data: bytes | None) -> bool:
+            nonlocal member
+            member = current
+            return False
+
+        self._fdicopy_visit_native(
+            callback,
+            with_data=False,
+            select=lambda current: current.name == name,
+        )
         if member is None:
             raise KeyError(name)
         return member
 
     def keys(self) -> Iterable[str]:
-        return self._list_names()
+        names: list[str] = []
+
+        def callback(member: CabMember, _data: bytes | None) -> bool:
+            if member.name is not None:
+                names.append(member.name)
+            return True
+
+        self.visit(callback)
+        return names
 
     def values(self) -> Iterable[CabMember]:
-        return self._list_members()
+        members: list[CabMember] = []
+
+        def callback(member: CabMember, _data: bytes | None) -> bool:
+            members.append(member)
+            return True
+
+        self.visit(callback)
+        return members
 
     def items(self) -> Iterable[tuple[str, CabMember]]:
-        return ((member.name, member) for member in self._list_members() if member.name is not None)
+        items: list[tuple[str, CabMember]] = []
+
+        def callback(member: CabMember, _data: bytes | None) -> bool:
+            if member.name is not None:
+                items.append((member.name, member))
+            return True
+
+        self.visit(callback)
+        return items
 
     def read(self, name: str) -> bytes:
-        return self._archive.read(name)
+        payload: bytes | None = None
+
+        def callback(_member: CabMember, data: bytes | None) -> bool:
+            nonlocal payload
+            payload = data
+            return False
+
+        self._fdicopy_visit_native(
+            callback,
+            with_data=True,
+            select=lambda member: member.name == name,
+        )
+        if payload is None:
+            raise KeyError(name)
+        return payload
 
     def read_many(self, names: Iterable[str]) -> Iterator[tuple[str, bytes]]:
         requested_names = list(names)
@@ -213,23 +285,65 @@ class CabFile:
             return iter(())
 
         requested_set = set(requested_names)
-        archive_order_names = [
-            name for name in self._archive.namelist() if name in requested_set
-        ]
-        payloads = self._archive.read(archive_order_names)
-        by_name = dict(zip(archive_order_names, payloads))
+        by_name: dict[str, bytes] = {}
+
+        def callback(member: CabMember, data: bytes | None) -> bool:
+            if member.name is not None and data is not None:
+                by_name[member.name] = data
+            return True
+
+        self._fdicopy_visit_native(
+            callback,
+            with_data=True,
+            select=lambda member: member.name in requested_set,
+        )
 
         return iter((name, by_name[name]) for name in requested_names if name in by_name)
 
     def extract(self, name: str, target_dir: CabTargetDir) -> None:
-        self._archive.extract(target_dir, names=[name])
+        out_dir = Path(target_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        wrote = False
+
+        def callback(member: CabMember, data: bytes | None) -> bool:
+            nonlocal wrote
+            if member.name is None or data is None:
+                return True
+            destination = out_dir / member.name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+            wrote = True
+            return False
+
+        self._fdicopy_visit_native(
+            callback,
+            with_data=True,
+            select=lambda member: member.name == name,
+        )
+        if not wrote:
+            raise KeyError(name)
 
     def extract_all(self, target_dir: CabTargetDir, members: Iterable[str] | None = None) -> None:
-        selected = list(members) if members is not None else None
-        self._archive.extract(target_dir, names=selected)
+        out_dir = Path(target_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        selected = set(members) if members is not None else None
+
+        def callback(member: CabMember, data: bytes | None) -> bool:
+            if member.name is None or data is None:
+                return True
+            destination = out_dir / member.name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+            return True
+
+        self._fdicopy_visit_native(
+            callback,
+            with_data=True,
+            select=None if selected is None else (lambda member: member.name in selected),
+        )
 
     def test(self) -> bool:
-        return self._archive.testcabinet()
+        return self.visit(lambda _member, _data: True, with_data=True)
 
 __all__ = [
     "CabinetError",

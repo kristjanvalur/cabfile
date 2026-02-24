@@ -71,3 +71,42 @@ def test_cabfile_mapping_metadata_interface(sample_multi_cab: Path):
 
         with pytest.raises(KeyError):
             _ = archive["missing.txt"]
+
+
+def test_cabfile_visit_walk_and_abort(sample_multi_cab: Path):
+    with cabfile.CabFile(str(sample_multi_cab)) as archive:
+        seen_without_data: list[str] = []
+
+        def visitor(member, data):
+            assert member.name is not None
+            seen_without_data.append(member.name)
+            assert data is None
+            return True
+
+        assert archive.visit(visitor) is True
+        assert seen_without_data == ["alpha.txt", "beta.txt", "gamma.txt"]
+
+        seen_with_data: list[tuple[str, bytes]] = []
+
+        def visitor_with_data(member, data):
+            assert member.name is not None
+            assert data is not None
+            seen_with_data.append((member.name, data))
+            return True
+
+        assert archive.walk(visitor_with_data, with_data=True) is True
+        assert seen_with_data == [
+            ("alpha.txt", b"alpha\n"),
+            ("beta.txt", b"beta\n"),
+            ("gamma.txt", b"gamma\n"),
+        ]
+
+        seen_abort: list[str] = []
+
+        def aborting_visitor(member, _data):
+            assert member.name is not None
+            seen_abort.append(member.name)
+            return member.name != "beta.txt"
+
+        assert archive.visit(aborting_visitor) is False
+        assert seen_abort == ["alpha.txt", "beta.txt"]

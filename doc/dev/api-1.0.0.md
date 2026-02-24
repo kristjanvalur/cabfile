@@ -213,6 +213,51 @@ Suggested modernization:
 
 Move low-level symbols to implementation modules (`core.py` or a future dedicated low-level module) and expose only user-facing API in `__init__.py`. If advanced users need internals, provide a clearly unsupported/internal import path.
 
+## FDI callback contract (reference)
+
+The decompression/enumeration path is driven by `FDICopy` with a notify callback:
+
+- Signature: `callback(fdint, pnotify) -> INT_PTR`
+- `fdint` is a `FDINOTIFICATIONTYPE` opcode.
+- `pnotify.contents` contains member/cabinet metadata fields (`psz1`, `cb`, `date`, `time`, `attribs`, `hf`, ...).
+
+Common opcodes and expected callback behavior:
+
+- `fdintCABINET_INFO`
+  - Cabinet metadata notification.
+  - Typical return: `0` (continue).
+
+- `fdintENUMERATE`
+  - Enumeration-stage notification.
+  - Typical return: `0` (continue).
+
+- `fdintCOPY_FILE`
+  - Fired once per member discovered.
+  - Inspect metadata from `pnotify.contents`.
+  - Return values:
+    - `0`: skip member data copy (enumeration only)
+    - file handle/int fd: request decompression into that handle
+    - `-1`: abort traversal
+
+- `fdintCLOSE_FILE_INFO`
+  - Fired after a previously accepted member finishes writing.
+  - `pnotify.contents.hf` is the handle previously returned from `fdintCOPY_FILE`.
+  - Typical return values:
+    - `1`: close/finalize succeeded; continue
+    - `-1`: abort
+
+- `fdintNEXT_CABINET`
+  - Request to continue in next cabinet (multi-cabinet set).
+  - Single-cab workflows generally do not support this and abort.
+
+- `fdintPARTIAL_FILE`
+  - Notification for partial file conditions across cabinet boundaries.
+
+Notes:
+
+- Exceptions raised in Python callbacks are trapped and translated to callback abort (`-1`) in wrapper code.
+- In this project, early-stop semantics are modeled by returning `False` from higher-level visitors, which then map to callback abort internally.
+
 ## Summary
 
 Version `1.0.0` provides a functional Windows CAB reader/extractor API centered on
