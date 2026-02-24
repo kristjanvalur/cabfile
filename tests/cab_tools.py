@@ -6,10 +6,14 @@ from pathlib import Path
 
 
 def makecab_available() -> bool:
-    return shutil.which("makecab") is not None or shutil.which("makecab.exe") is not None
+    return (
+        shutil.which("makecab") is not None or shutil.which("makecab.exe") is not None
+    )
 
 
-def create_cab_with_makecab(work_dir: Path, cabinet_name: str, files: dict[str, bytes]) -> Path:
+def create_cab_with_makecab(
+    work_dir: Path, cabinet_name: str, files: dict[str, bytes]
+) -> Path:
     work_dir.mkdir(parents=True, exist_ok=True)
     source_dir = work_dir / "src"
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -40,10 +44,14 @@ def create_cab_with_makecab(work_dir: Path, cabinet_name: str, files: dict[str, 
 
     ddf_file.write_text("\n".join(ddf_lines) + "\n", encoding="utf-8")
 
-    subprocess.run(["makecab", "/F", str(ddf_file)], check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["makecab", "/F", str(ddf_file)], check=True, capture_output=True, text=True
+    )
 
     cabinet_path = output_dir / cabinet_name
     if not cabinet_path.exists():
-        raise FileNotFoundError(f"makecab did not create expected cabinet: {cabinet_path}")
+        raise FileNotFoundError(
+            f"makecab did not create expected cabinet: {cabinet_path}"
+        )
 
     return cabinet_path

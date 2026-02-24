@@ -26,9 +26,21 @@ def test_cabfile_members_and_read_many(multi_cab_source):
     with cabfile.CabFile(multi_cab_source) as archive:
         members = list(archive.values())
         assert [item.name for item in members] == ["alpha.txt", "beta.txt", "gamma.txt"]
-        assert [item.filename for item in members] == ["alpha.txt", "beta.txt", "gamma.txt"]
-        assert [item.size for item in members] == [len(b"alpha\n"), len(b"beta\n"), len(b"gamma\n")]
-        assert [item.file_size for item in members] == [len(b"alpha\n"), len(b"beta\n"), len(b"gamma\n")]
+        assert [item.filename for item in members] == [
+            "alpha.txt",
+            "beta.txt",
+            "gamma.txt",
+        ]
+        assert [item.size for item in members] == [
+            len(b"alpha\n"),
+            len(b"beta\n"),
+            len(b"gamma\n"),
+        ]
+        assert [item.file_size for item in members] == [
+            len(b"alpha\n"),
+            len(b"beta\n"),
+            len(b"gamma\n"),
+        ]
         read_many = list(archive.read_members(["alpha.txt", "gamma.txt"]))
         assert [(member.name, data) for member, data in read_many] == [
             ("alpha.txt", b"alpha\n"),
@@ -50,7 +62,9 @@ def test_cabfile_extract_and_extract_all(multi_cab_source, tmp_path: Path):
 
     with cabfile.CabFile(multi_cab_source) as archive:
         extracted_one = list(archive.extract_members(str(selected_out), ["beta.txt"]))
-        extracted_many = list(archive.extract_members(str(all_out), ["alpha.txt", "gamma.txt"]))
+        extracted_many = list(
+            archive.extract_members(str(all_out), ["alpha.txt", "gamma.txt"])
+        )
 
     assert [member.name for member in extracted_one] == ["beta.txt"]
     assert [member.name for member in extracted_many] == ["alpha.txt", "gamma.txt"]

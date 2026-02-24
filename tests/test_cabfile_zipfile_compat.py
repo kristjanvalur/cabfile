@@ -44,7 +44,11 @@ def test_zipfile_discovery_aliases_and_properties(multi_cab_source):
         assert info.size == len(b"beta\n")
 
         filelist = archive.filelist
-        assert [member.name for member in filelist] == ["alpha.txt", "beta.txt", "gamma.txt"]
+        assert [member.name for member in filelist] == [
+            "alpha.txt",
+            "beta.txt",
+            "gamma.txt",
+        ]
 
         name_to_info = archive.NameToInfo
         assert list(name_to_info.keys()) == ["alpha.txt", "beta.txt", "gamma.txt"]

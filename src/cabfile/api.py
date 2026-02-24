@@ -139,7 +139,9 @@ class CabFile:
             if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
                 return 0
             if fdint == fdintCOPY_FILE:
-                member = CabMember(_to_text(notify.psz1), DecodeFATTime(notify.date, notify.time))
+                member = CabMember(
+                    _to_text(notify.psz1), DecodeFATTime(notify.date, notify.time)
+                )
                 member.file_size = notify.cb
                 member.external_attr = notify.attribs
 
@@ -267,7 +269,9 @@ class CabFile:
         self.visit(on_copy_file)
         return items
 
-    def read_members(self, names: Iterable[str] | None = None) -> Iterator[tuple[CabMember, bytes]]:
+    def read_members(
+        self, names: Iterable[str] | None = None
+    ) -> Iterator[tuple[CabMember, bytes]]:
         """Yield ``(member, payload)`` for selected names, or all when ``names`` is ``None``.
 
         Output follows cabinet traversal order.
@@ -296,7 +300,9 @@ class CabFile:
 
         return iter(entries)
 
-    def extract_members(self, target_dir: CabTargetDir, names: Iterable[str] | None = None) -> Iterator[CabMember]:
+    def extract_members(
+        self, target_dir: CabTargetDir, names: Iterable[str] | None = None
+    ) -> Iterator[CabMember]:
         """Extract selected names, or all when ``names`` is ``None``, and yield metadata."""
         out_dir = Path(target_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -334,7 +340,9 @@ class CabFile:
     @property
     def NameToInfo(self) -> dict[str, CabMember]:
         """Member-name to metadata mapping (ZipFile-compatible property)."""
-        return {member.name: member for member in self.infolist() if member.name is not None}
+        return {
+            member.name: member for member in self.infolist() if member.name is not None
+        }
 
     def namelist(self) -> list[str]:
         """Return member names in cabinet order (ZipFile-compatible alias)."""
@@ -353,8 +361,15 @@ class CabFile:
         print("%-46s %19s %12s" % ("File Name", "Modified", "Size"), file=file)
         for member in self.infolist():
             member_name = member.filename or ""
-            timestamp = member.datetime.strftime("%Y-%m-%d %H:%M:%S") if member.datetime else "unknown"
-            print("%-46s %19s %12d" % (member_name, timestamp, member.file_size), file=file)
+            timestamp = (
+                member.datetime.strftime("%Y-%m-%d %H:%M:%S")
+                if member.datetime
+                else "unknown"
+            )
+            print(
+                "%-46s %19s %12d" % (member_name, timestamp, member.file_size),
+                file=file,
+            )
 
     def read(self, name: str, pwd: bytes | None = None) -> bytes:
         """Read payload bytes for one member name (ZipFile-compatible shape).
@@ -412,6 +427,7 @@ class CabFile:
     def test(self) -> bool:
         """Test cabinet readability by copying all member data to in-memory sinks."""
         try:
+
             def on_copy_file(_member: CabMember):
                 sink = BytesIO()
 
@@ -424,6 +440,7 @@ class CabFile:
             return True
         except (CabinetError, IOError, OSError):
             return False
+
 
 __all__ = [
     "CabinetError",

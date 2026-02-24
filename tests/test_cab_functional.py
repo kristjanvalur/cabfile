@@ -34,7 +34,11 @@ def test_generated_cab_extract(sample_multi_cab: Path, tmp_path: Path):
         archive.extractall(str(out_dir))
         extracted = list(archive.extract_members(str(out_dir)))
 
-    assert [member.name for member in extracted] == ["alpha.txt", "beta.txt", "gamma.txt"]
+    assert [member.name for member in extracted] == [
+        "alpha.txt",
+        "beta.txt",
+        "gamma.txt",
+    ]
 
     assert (out_dir / "alpha.txt").read_bytes() == b"alpha\n"
     assert (out_dir / "beta.txt").read_bytes() == b"beta\n"
