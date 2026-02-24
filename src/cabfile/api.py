@@ -24,17 +24,39 @@ from .core import (
     fdintCLOSE_FILE_INFO,
     fdintCOPY_FILE,
     fdintENUMERATE,
-    is_cabinetfile,
+    is_cabinetfile as _is_cabinetfile,
     main,
 )
 from .errors import CabFileError, CabPlatformError, CabStopIteration, CabinetError
-from .models import CabMember, CabinetInfo, DecodeFATTime
+from .models import CabMember, CabSummary, CabinetInfo, DecodeFATTime
 
 CabSource = str | PathLike[str] | BinaryIO
 CabTargetDir = str | PathLike[str]
 VisitOnDone = Callable[[], None]
 VisitCopyResult = tuple[BinaryIO, VisitOnDone] | None
 VisitCopyCallback = Callable[[CabMember], VisitCopyResult]
+
+
+def is_cabinet(source: CabSource) -> bool:
+    """Return ``True`` if ``source`` is a readable cabinet file."""
+    try:
+        return bool(_is_cabinetfile(source))
+    except (CabinetError, IOError, OSError):
+        return False
+
+
+def probe(source: CabSource) -> CabSummary:
+    """Return basic cabinet summary metadata for ``source``."""
+    info = _is_cabinetfile(source)
+    if not info:
+        raise CabinetError("Not a cabinet file")
+
+    return CabSummary(
+        file_count=int(info.cFiles),
+        folder_count=int(info.cFolders),
+        set_id=int(info.setID),
+        cabinet_index=int(info.iCabinet),
+    )
 
 
 class CabFile:
@@ -396,9 +418,11 @@ __all__ = [
     "CabFile",
     "CabPlatformError",
     "CabStopIteration",
+    "CabSummary",
     "CabinetFile",
     "CabinetInfo",
     "DecodeFATTime",
-    "is_cabinetfile",
+    "is_cabinet",
+    "probe",
     "main",
 ]

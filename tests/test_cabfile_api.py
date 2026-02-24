@@ -247,3 +247,20 @@ def test_cabfile_visit_filelike_with_on_close(multi_cab_source):
         assert sink.closed
         assert sink.captured == b"alpha\n"
         assert closed is True
+
+
+def test_probe_and_is_cabinet(sample_single_cab: Path, truncated_cab: Path):
+    assert cabfile.is_cabinet(str(sample_single_cab)) is True
+
+    with sample_single_cab.open("rb") as source:
+        assert cabfile.is_cabinet(source) is True
+
+    summary = cabfile.probe(str(sample_single_cab))
+    assert summary.file_count == 1
+    assert summary.folder_count >= 1
+    assert summary.set_id >= 0
+    assert summary.cabinet_index >= 0
+
+    assert cabfile.is_cabinet(str(truncated_cab)) is False
+    with pytest.raises(cabfile.CabinetError):
+        cabfile.probe(str(truncated_cab))
