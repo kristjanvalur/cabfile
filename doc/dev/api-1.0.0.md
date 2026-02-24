@@ -3,6 +3,10 @@
 This document describes the legacy API surface originally published as version `1.0.0`.
 It is intended for side-by-side comparison with the 2.0 modernization plan.
 
+> Note (current 2.0 branch): the active public API has moved to `CabFile` plus
+> `is_cabinet`/`probe`, with optional ZipFile-compatible aliases layered on top.
+> This file remains a historical reference.
+
 ## Module
 
 Single-module implementation:

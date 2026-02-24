@@ -17,6 +17,14 @@ This plan targets a **breaking 2.0 release** (`2.0.0pre1` already set) and assum
 - 64-bit ctypes binding issues fixed for FDI callbacks/handles.
 - Core module split into `api.py`, `core.py`, `errors.py`, and `models.py`.
 - Generated-CAB functional tests added (with `makecab`-gated fixtures).
+- Public `CabFile` API now includes:
+  - member-centric methods: `read_members(names=None)`, `extract_members(target_dir, names=None)`
+  - ZipFile-compatible layer: `read`, `extract`, `extractall`, `namelist`, `infolist`, `getinfo`, `printdir`, `filelist`, `NameToInfo`
+- Public helpers implemented:
+  - `is_cabinet(source) -> bool`
+  - `probe(source) -> CabSummary`
+- `CabMember` now uses `datetime` values for timestamps.
+- Tests are organized into API, ZipFile-compatibility, and functional suites, with path + file-like source parameterization.
 
 ## Goals
 
@@ -54,7 +62,7 @@ tests/
 - `core.py`: ctypes declarations, callback plumbing, and current legacy-compatible reader implementation.
 - `__init__.py`: curated public exports and package metadata.
 
-## New public API (2.0)
+## Public API (current 2.0 state)
 
 ### Primary class
 
@@ -62,33 +70,38 @@ tests/
 - Context manager required by design:
   - `with CabFile(path) as cab:`
 
-### Core methods
+### Member-centric methods
 
-- `names() -> list[str]`
-- `iter_members() -> Iterator[CabMember]`
-- `get_member(name: str) -> CabMember`
-- `read(name: str) -> bytes`
-- `read_text(name: str, encoding: str = "utf-8", errors: str = "strict") -> str`
-- `extract(name: str, target_dir: str | os.PathLike[str]) -> pathlib.Path`
-- `extract_all(target_dir: str | os.PathLike[str], members: Iterable[str] | None = None) -> list[pathlib.Path]`
+- mapping-style metadata: `keys`, `values`, `items`, `__getitem__`, `__contains__`, iteration/length
+- `visit(on_copy_file) -> bool`
+- `read_members(names: Iterable[str] | None = None) -> Iterator[tuple[CabMember, bytes]]`
+- `extract_members(target_dir: str | os.PathLike[str], names: Iterable[str] | None = None) -> Iterator[CabMember]`
 - `test() -> bool`
 - `close() -> None`
+
+### ZipFile-compatible layer
+
+- `read(name: str, pwd: bytes | None = None) -> bytes`
+- `extract(member, path=None, pwd=None) -> str`
+- `extractall(path=None, members=None, pwd=None) -> None`
+- `namelist()`, `infolist()`, `getinfo(name)`, `printdir(file=None)`
+- `filelist` and `NameToInfo` properties
 
 ### Top-level helpers
 
 - `is_cabinet(source: str | os.PathLike[str] | BinaryIO) -> bool`
-- `probe(source: str | os.PathLike[str] | BinaryIO) -> CabinetSummary`
+- `probe(source: str | os.PathLike[str] | BinaryIO) -> CabSummary`
 
 ### Data models
 
 Use dataclasses with slots:
 
 - `CabMember`:
-  - `name: str`
+  - `name: str | None`
   - `size: int`
-  - `modified: datetime`
+  - `datetime: datetime | None`
   - `attributes: int`
-- `CabinetSummary`:
+- `CabSummary`:
   - `file_count: int`
   - `folder_count: int`
   - `set_id: int`
@@ -174,11 +187,15 @@ Status: largely complete, with remaining cleanup items.
 - Implement `CabFile`, top-level `is_cabinet` and `probe`, dataclass models, and typed exceptions.
 - Add `python -m cabfile` CLI commands.
 
+Status: mostly complete for API shape; CLI modernization still pending.
+
 ### Phase 3: Validation and release prep
 
 - Add fixture-based tests and CI matrix.
 - Update README to 2.0 API and migration notes.
 - Publish `2.0.0pre1`/subsequent pre-releases for feedback.
+
+Status: fixture-based tests are in place and currently passing; docs/CI/release polish remains.
 
 ## 1.x to 2.0 migration notes
 
