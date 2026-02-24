@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    tags:
+      - "v*"
   pull_request:
 
 jobs:
@@ -31,3 +33,28 @@ jobs:
 
       - name: Mypy
         run: uv run mypy
+
+      - name: Run tests
+        run: uv run python -c "import ctypes, sys, pytest; ctypes.windll.kernel32.SetErrorMode(0x0002); raise SystemExit(pytest.main(['-q']))"
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: lint-and-typecheck
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
