@@ -9,6 +9,15 @@ This plan targets a **breaking 2.0 release** (`2.0.0pre1` already set) and assum
 - Target runtime is Python 3.11+ only.
 - Windows remains the only supported platform (dependency on `cabinet.dll`).
 
+## Current status (implemented)
+
+- Project migrated to `pyproject.toml` + `src/` layout.
+- Package/module renamed to `cabfile`.
+- Python 2 compatibility branches removed.
+- 64-bit ctypes binding issues fixed for FDI callbacks/handles.
+- Core module split into `api.py`, `core.py`, `errors.py`, and `models.py`.
+- Generated-CAB functional tests added (with `makecab`-gated fixtures).
+
 ## Goals
 
 1. Deliver a clean, typed, Python 3.11+ API.
@@ -29,23 +38,20 @@ src/
     api.py
     errors.py
     models.py
-    _fdi.py
-    _io.py
-    _compat.py   # optional; can be omitted if no shims are needed
+    core.py
 tests/
-  test_api.py
-  test_errors.py
-  test_paths.py
-  test_smoke_import.py
+  conftest.py
+  test_import.py
+  test_cab_functional.py
+  cab_tools.py
 ```
 
 ### Module responsibilities
 
-- `api.py`: Public classes/functions (`CabFile`, `is_cabinet`, extraction/read operations).
+- `api.py`: Public classes/functions and exports.
 - `errors.py`: Exception hierarchy.
 - `models.py`: Dataclasses (e.g., member metadata).
-- `_fdi.py`: ctypes declarations and callback plumbing only.
-- `_io.py`: filename/path normalization, bytes/text conversion, filesystem writes.
+- `core.py`: ctypes declarations, callback plumbing, and current legacy-compatible reader implementation.
 - `__init__.py`: curated public exports and package metadata.
 
 ## New public API (2.0)
@@ -93,7 +99,7 @@ Use dataclasses with slots:
 Define explicit typed errors:
 
 - `CabFileError(Exception)` (base)
-- `CabPlatformError(CabFileError)`
+- `CabPlatformError(ImportError)`
 - `CabFormatError(CabFileError)`
 - `CabApiError(CabFileError)`
 - `CabExtractionError(CabFileError)`
@@ -157,9 +163,11 @@ Use `argparse` with structured exit codes and concise error messages.
 
 ### Phase 1: Internal split and cleanup
 
-- Split monolithic `__init__.py` into `api.py`, `_fdi.py`, `errors.py`, `models.py`.
+- Split monolithic implementation into `api.py`, `core.py`, `errors.py`, `models.py`.
 - Remove Python 2 code paths and legacy compatibility branches.
 - Fix bytes/text and FAT time handling.
+
+Status: largely complete, with remaining cleanup items.
 
 ### Phase 2: New API surface
 

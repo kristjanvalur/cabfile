@@ -81,7 +81,6 @@ def test_extract_selected_names_only(sample_multi_cab: Path, tmp_path: Path):
     assert not (out_dir / "gamma.txt").exists()
 
 
-@pytest.mark.xfail(reason="Known bytes/str mismatch in file-object path of FDIObjectFileManager", strict=False)
 def test_file_object_inputs_and_testcabinet(sample_single_cab: Path):
     cab_path = sample_single_cab
 
@@ -92,7 +91,7 @@ def test_file_object_inputs_and_testcabinet(sample_single_cab: Path):
         archive = cabfile.CabinetFile(file_obj)
         try:
             assert archive.namelist() == ["hello.txt"]
-            assert archive.read("hello.txt") == b"hello\n"
+            assert archive.read("hello.txt") == b"hello from cabfile\n"
             assert archive.testcabinet() is True
         finally:
             archive.close()

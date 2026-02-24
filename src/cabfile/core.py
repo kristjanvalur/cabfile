@@ -390,7 +390,7 @@ class FileProxy(object):
 
 class FDIObjectFileManager(FDIFileManager):
     """a subclass which enables us to use a file object as a source"""
-    fname = "_file_"
+    fname = b"_file_"
     def setfile(self, f):
         """set the buffer associated with this object and return its name"""
         self.file = f
@@ -444,6 +444,7 @@ class CabinetFile(object):
     Only single-file cabinets are supported
     """
     def __init__(self, filename, mode='r'):
+        self.hfdi = None
         self.a = FDIAllocator()
         self.e = ERF()
 
@@ -451,8 +452,10 @@ class CabinetFile(object):
         self.head, self.tail = os.path.split(os.path.normpath(self.filename))
         if self.head:
             self.head += "\\"
-        self.head = self.head.encode(sys.getfilesystemencoding(), errors="surrogateescape")
-        self.tail = self.tail.encode(sys.getfilesystemencoding(), errors="surrogateescape")
+        if isinstance(self.head, str):
+            self.head = self.head.encode(sys.getfilesystemencoding(), errors="surrogateescape")
+        if isinstance(self.tail, str):
+            self.tail = self.tail.encode(sys.getfilesystemencoding(), errors="surrogateescape")
             
         self.hfdi = FDICreate(self.a.malloc, self.a.free,
                               self.f.open, self.f.read, self.f.write, self.f.close, self.f.seek,
@@ -460,7 +463,7 @@ class CabinetFile(object):
 
     def __del__(self):
         #must have a del method to ensure that we call FDIDestroy
-        if FDIDestroy: #module is not being torn down
+        if FDIDestroy and hasattr(self, "hfdi"): #module is not being torn down
             self.close()
 
     def close(self):

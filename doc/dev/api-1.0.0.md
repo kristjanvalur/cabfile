@@ -11,11 +11,12 @@ Single-module implementation:
 
 In this repository modernization branch, the same code currently lives at:
 
-- `src/cabfile/__init__.py`
+- `src/cabfile/core.py` (implementation)
+- `src/cabfile/api.py` and `src/cabfile/__init__.py` (public exports)
 
 Suggested modernization:
 
-Split the monolithic module into `api.py`, `_fdi.py`, `models.py`, and `errors.py`, then expose a curated public surface from `__init__.py`. This keeps low-level ctypes details internal and makes the public API easier to maintain and document.
+Split the monolithic module into `api.py`, `core.py`, `models.py`, and `errors.py`, then expose a curated public surface from `__init__.py`. This keeps low-level ctypes details internal and makes the public API easier to maintain and document.
 
 ## Platform behavior
 
@@ -210,7 +211,7 @@ These are implementation-facing and not a cleanly curated public API.
 
 Suggested modernization:
 
-Move low-level symbols to private modules (`_fdi.py`) and expose only user-facing API in `__init__.py`. If advanced users need internals, provide a clearly unsupported/internal import path.
+Move low-level symbols to implementation modules (`core.py` or a future dedicated low-level module) and expose only user-facing API in `__init__.py`. If advanced users need internals, provide a clearly unsupported/internal import path.
 
 ## Summary
 
