@@ -9,19 +9,18 @@
 Utility module to read windows cabinet files.
 """
 
-from __future__ import print_function
 import sys
 import os.path
-try:
-    from cStringIO import StringIO
-except ImportError:
-    from io import StringIO
+from io import BytesIO
 from ctypes import *
 from ctypes.wintypes import BOOL
 from functools import wraps
 
-import sys
-PY2 = sys.version_info[0] == 2
+
+def _to_text(value):
+    if isinstance(value, bytes):
+        return value.decode(sys.getfilesystemencoding(), errors="surrogateescape")
+    return value
 
 
 ##################################
@@ -447,9 +446,8 @@ class CabinetFile(object):
         self.head, self.tail = os.path.split(os.path.normpath(self.filename))
         if self.head:
             self.head += "\\"
-        if not PY2:
-            self.head = self.head.encode(sys.getfilesystemencoding())
-            self.tail = self.tail.encode(sys.getfilesystemencoding())
+        self.head = self.head.encode(sys.getfilesystemencoding(), errors="surrogateescape")
+        self.tail = self.tail.encode(sys.getfilesystemencoding(), errors="surrogateescape")
             
         self.hfdi = FDICreate(self.a.malloc, self.a.free,
                               self.f.open, self.f.read, self.f.write, self.f.close, self.f.seek,
@@ -493,7 +491,7 @@ class CabinetFile(object):
             if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
                 return 0
             if fdint == fdintCOPY_FILE:
-                names.append(notify.psz1)
+                names.append(_to_text(notify.psz1))
                 return 0 #don't copy
             return -1
 
@@ -510,7 +508,7 @@ class CabinetFile(object):
             if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
                 return 0
             if fdint == fdintCOPY_FILE:
-                i = CabinetInfo(notify.psz1, DecodeFATTime(notify.date, notify.time))
+                i = CabinetInfo(_to_text(notify.psz1), DecodeFATTime(notify.date, notify.time))
                 i.file_size = notify.cb
                 i.external_attr = notify.attribs
                 infos.append(i)
@@ -538,14 +536,16 @@ class CabinetFile(object):
     def read(self, name):
         """Return file bytes (as a string) for name."""
         result = []
-        names = [name] if isinstance(name, basestring) else name
+        single_name = isinstance(name, str)
+        names = {name} if single_name else set(name)
         def callback(fdint, pnotify):
             notify = pnotify.contents
             if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
                 return 0
             if fdint == fdintCOPY_FILE:
-                if notify.psz1 in names:
-                    sio = StringIO()
+                member_name = _to_text(notify.psz1)
+                if member_name in names:
+                    sio = BytesIO()
                     fd = self.f.map(sio)
                     return fd #signals that we want to copy!
                 return 0 #don't copy
@@ -556,19 +556,21 @@ class CabinetFile(object):
             return -1
 
         self.__FDICopy(callback)
-        return result[0] if isinstance(name, basestring) else result
+        return result[0] if single_name else result
         
-    def extract(self, target, names=[]):
+    def extract(self, target, names=None):
         """extract files into a target directory.
         Optionally, a set of names may be given
         """
+        selected_names = set(names) if names else None
         def callback(fdint, pnotify):
             notify = pnotify.contents
             if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
                 return 0
             if fdint == fdintCOPY_FILE:
-                if not names or notify.psz1 in names:
-                    pname = os.path.join(target, notify.psz1)
+                member_name = _to_text(notify.psz1)
+                if selected_names is None or member_name in selected_names:
+                    pname = os.path.join(target, member_name)
                     dir = os.path.dirname(pname)
                     if not os.path.exists(dir):
                         os.makedirs(dir)
@@ -591,7 +593,7 @@ class CabinetFile(object):
             if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
                 return 0
             if fdint == fdintCOPY_FILE:
-                sio = StringIO()
+                sio = BytesIO()
                 fd = self.f.map(sio)
                 return fd #signals that we want to copy!
             if fdint == fdintCLOSE_FILE_INFO:
@@ -623,7 +625,7 @@ def DecodeFATTime(FATdate, FATtime):
     sec = 2 * (FATtime & 0x1f)
     min = (FATtime >> 5) & 0x3f
     hour = FATtime >> 11
-    return (year, day, month, hour, min, sec)
+    return (year, month, day, hour, min, sec)
 
 
 def main(args = None):
