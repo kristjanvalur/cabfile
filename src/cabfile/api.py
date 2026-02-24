@@ -241,45 +241,21 @@ class CabFile:
         self.visit(on_copy_file)
         return items
 
-    def read(self, name: str) -> tuple[CabMember, bytes]:
-        """Read a single member payload by name.
-
-        Raises ``KeyError`` when the member is not present.
-        """
-        result: tuple[CabMember, bytes] | None = None
-
-        def on_copy_file(member: CabMember):
-            if member.name != name:
-                return None
-
-            sink = BytesIO()
-
-            def on_done() -> None:
-                nonlocal result
-                result = (member, sink.getvalue())
-                sink.close()
-                raise CabStopIteration()
-
-            return sink, on_done
-
-        self.visit(on_copy_file)
-        if result is None:
-            raise KeyError(name)
-        return result
-
-    def read_many(self, names: Iterable[str]) -> Iterator[tuple[CabMember, bytes]]:
-        """Yield ``(member, payload)`` for requested names that exist.
+    def read_members(self, names: Iterable[str] | None = None) -> Iterator[tuple[CabMember, bytes]]:
+        """Yield ``(member, payload)`` for selected names, or all when ``names`` is ``None``.
 
         Output follows cabinet traversal order.
         """
-        requested_set = set(names)
-        if not requested_set:
+        requested_set = None if names is None else set(names)
+        if requested_set is not None and not requested_set:
             return iter(())
 
         entries: list[tuple[CabMember, bytes]] = []
 
         def on_copy_file(member: CabMember):
-            if member.name is None or member.name not in requested_set:
+            if member.name is None:
+                return None
+            if requested_set is not None and member.name not in requested_set:
                 return None
 
             sink = BytesIO()
@@ -294,57 +270,13 @@ class CabFile:
 
         return iter(entries)
 
-    def read_all(self) -> Iterator[tuple[CabMember, bytes]]:
-        """Yield ``(member, payload)`` for all members in cabinet order."""
-        entries: list[tuple[CabMember, bytes]] = []
-
-        def on_copy_file(member: CabMember):
-            sink = BytesIO()
-
-            def on_done() -> None:
-                entries.append((member, sink.getvalue()))
-                sink.close()
-
-            return sink, on_done
-
-        self.visit(on_copy_file)
-        return iter(entries)
-
-    def extract(self, name: str, target_dir: CabTargetDir) -> CabMember:
-        """Extract one member to ``target_dir``.
-
-        Raises ``KeyError`` when the member is not present.
-        """
+    def extract_members(self, target_dir: CabTargetDir, names: Iterable[str] | None = None) -> Iterator[CabMember]:
+        """Extract selected names, or all when ``names`` is ``None``, and yield metadata."""
         out_dir = Path(target_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        extracted: CabMember | None = None
-
-        def on_copy_file(member: CabMember):
-            if member.name != name:
-                return None
-
-            destination = out_dir / member.name
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            output_file = destination.open("wb")
-
-            def on_done() -> None:
-                nonlocal extracted
-                extracted = member
-                output_file.close()
-                raise CabStopIteration()
-
-            return output_file, on_done
-
-        self.visit(on_copy_file)
-        if extracted is None:
-            raise KeyError(name)
-        return extracted
-
-    def extract_all(self, target_dir: CabTargetDir, members: Iterable[str] | None = None) -> Iterable[CabMember]:
-        """Extract all members, or only selected ``members``, and return extracted metadata."""
-        out_dir = Path(target_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        selected = set(members) if members is not None else None
+        selected = None if names is None else set(names)
+        if selected is not None and not selected:
+            return iter(())
         extracted_members: list[CabMember] = []
 
         def on_copy_file(member: CabMember):
@@ -365,6 +297,82 @@ class CabFile:
 
         self.visit(on_copy_file)
         return iter(extracted_members)
+
+    # ZipFile-compatible API
+
+    @property
+    def filelist(self) -> list[CabMember]:
+        """Ordered member metadata list (ZipFile-compatible property)."""
+        return self.infolist()
+
+    @property
+    def NameToInfo(self) -> dict[str, CabMember]:
+        """Member-name to metadata mapping (ZipFile-compatible property)."""
+        return {member.name: member for member in self.infolist() if member.name is not None}
+
+    def namelist(self) -> list[str]:
+        """Return member names in cabinet order (ZipFile-compatible alias)."""
+        return list(self.keys())
+
+    def infolist(self) -> list[CabMember]:
+        """Return member metadata objects (ZipFile-compatible alias)."""
+        return list(self.values())
+
+    def getinfo(self, name: str) -> CabMember:
+        """Return metadata for one member (ZipFile-compatible alias)."""
+        return self[name]
+
+    def printdir(self, file=None) -> None:
+        """Print a table of archive members (ZipFile-compatible shape)."""
+        print("%-46s %19s %12s" % ("File Name", "Modified", "Size"), file=file)
+        for member in self.infolist():
+            member_name = member.filename or ""
+            timestamp = member.datetime.strftime("%Y-%m-%d %H:%M:%S") if member.datetime else "unknown"
+            print("%-46s %19s %12d" % (member_name, timestamp, member.file_size), file=file)
+
+    def read(self, name: str, pwd: bytes | None = None) -> bytes:
+        """Read member payload bytes by name (ZipFile-compatible shape)."""
+        if pwd is not None:
+            raise NotImplementedError("CAB decryption is not supported")
+        for member, payload in self.read_members([name]):
+            if member.name == name:
+                return payload
+        raise KeyError(name)
+
+    def extract(
+        self,
+        member: str | CabMember,
+        path: CabTargetDir | None = None,
+        pwd: bytes | None = None,
+    ) -> str:
+        """Extract one member (ZipFile-compatible shape) and return destination path."""
+        if pwd is not None:
+            raise NotImplementedError("CAB decryption is not supported")
+
+        member_name = member.name if isinstance(member, CabMember) else member
+        if member_name is None:
+            raise KeyError(member)
+
+        output_dir = Path(path) if path is not None else Path(".")
+        for extracted_member in self.extract_members(output_dir, [member_name]):
+            if extracted_member.name is not None:
+                return str(output_dir / extracted_member.name)
+            break
+        raise KeyError(member_name)
+
+    def extractall(
+        self,
+        path: CabTargetDir | None = None,
+        members: Iterable[str] | None = None,
+        pwd: bytes | None = None,
+    ) -> None:
+        """Extract all or selected members (ZipFile-compatible shape)."""
+        if pwd is not None:
+            raise NotImplementedError("CAB decryption is not supported")
+
+        output_dir = Path(path) if path is not None else Path(".")
+        for _ in self.extract_members(output_dir, names=members):
+            pass
 
     def test(self) -> bool:
         """Test cabinet readability by copying all member data to a null sink."""
