@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from ctypes import byref
 import os.path
 import sys
@@ -79,7 +79,7 @@ class CabFile:
             FDIDestroy(hfdi)
             self._hfdi = None
 
-    def _fdicopy_native(self, callback) -> int:
+    def _fdicopy_native(self, callback, err_success: Callable[[], bool] | None = None) -> int:
         self._open()
         excinfo = []
 
@@ -97,6 +97,8 @@ class CabFile:
             if excinfo:
                 raise excinfo[1]
             self._f.raise_error()
+            if err_success is not None and err_success():
+                return result
             self._e.raise_error()
         return result
 
@@ -122,7 +124,7 @@ class CabFile:
         if archive is not None:
             archive.close()
 
-    def names(self) -> Iterator[str]:
+    def names(self) -> Iterable[str]:
         names: list[str] = []
 
         def callback(fdint, pnotify):
@@ -135,9 +137,9 @@ class CabFile:
             return -1
 
         self._fdicopy_native(callback)
-        return iter(names)
+        return names
 
-    def members(self) -> Iterator[CabMember]:
+    def members(self) -> Iterable[CabMember]:
         infos: list[CabMember] = []
 
         def callback(fdint, pnotify):
@@ -145,7 +147,7 @@ class CabFile:
             if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
                 return 0
             if fdint == fdintCOPY_FILE:
-                info = CabinetInfo(_to_text(notify.psz1), DecodeFATTime(notify.date, notify.time))
+                info = CabMember(_to_text(notify.psz1), DecodeFATTime(notify.date, notify.time))
                 info.file_size = notify.cb
                 info.external_attr = notify.attribs
                 infos.append(info)
@@ -153,10 +155,28 @@ class CabFile:
             return -1
 
         self._fdicopy_native(callback)
-        return iter(infos)
+        return infos
 
     def get_member(self, name: str) -> CabMember | None:
-        return self._archive.getinfo(name)
+        member: CabMember | None = None
+
+        def callback(fdint, pnotify):
+            nonlocal member
+            notify = pnotify.contents
+            if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
+                return 0
+            if fdint == fdintCOPY_FILE:
+                member_name = _to_text(notify.psz1)
+                if member_name == name:
+                    member = CabMember(member_name, DecodeFATTime(notify.date, notify.time))
+                    member.file_size = notify.cb
+                    member.external_attr = notify.attribs
+                    return -1
+                return 0
+            return -1
+
+        self._fdicopy_native(callback, err_success=lambda: member is not None)
+        return member
 
     def read(self, name: str) -> bytes:
         return self._archive.read(name)
