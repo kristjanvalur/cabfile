@@ -590,7 +590,7 @@ class CabinetFile(object):
         """Print a table of contents for the archive."""
         print("%-46s %19s %12s" % ("File Name", "Modified    ", "Size"))
         for cinfo in self.infolist():
-            date = "%d-%02d-%02d %02d:%02d:%02d" % cinfo.date_time
+            date = cinfo.datetime.strftime("%Y-%m-%d %H:%M:%S") if cinfo.datetime else "unknown"
             print("%-46s %s %12d" % (cinfo.filename, date, cinfo.file_size))
 
     def getinfo(self, name):

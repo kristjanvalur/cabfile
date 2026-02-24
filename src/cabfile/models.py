@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime as DateTime
 
 
 @dataclass(slots=True)
@@ -8,7 +9,7 @@ class CabMember:
     """Metadata for a cabinet member."""
 
     name: str | None = None
-    date_time: tuple[int, int, int, int, int, int] | None = None
+    datetime: DateTime | None = None
     size: int = 0
     attributes: int = 0
 
@@ -40,7 +41,7 @@ class CabMember:
         return "<CabinetInfo %s, size=%s, date=%r, attrib=%x>" % (
             self.filename,
             self.file_size,
-            self.date_time,
+            self.datetime,
             self.external_attr,
         )
 
@@ -57,11 +58,14 @@ class CabSummary:
 
 
 def DecodeFATTime(FATdate, FATtime):
-    """Convert the 2x16 bits of time in the FAT system to a tuple"""
+    """Convert FAT date/time bitfields to a ``datetime`` object."""
     day = FATdate & 0x1F
     month = (FATdate >> 5) & 0xF
     year = 1980 + (FATdate >> 9)
     sec = 2 * (FATtime & 0x1F)
     minute = (FATtime >> 5) & 0x3F
     hour = FATtime >> 11
-    return (year, month, day, hour, minute, sec)
+    try:
+        return DateTime(year, month, day, hour, minute, sec)
+    except ValueError:
+        return None
