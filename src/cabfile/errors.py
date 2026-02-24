@@ -8,3 +8,7 @@ class CabinetError(CabFileError):
 
 class CabPlatformError(ImportError):
     pass
+
+
+class CabStopIteration(CabFileError):
+    pass

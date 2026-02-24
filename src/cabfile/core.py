@@ -12,6 +12,7 @@ Utility module to read windows cabinet files.
 import sys
 import os.path
 from io import BytesIO
+from contextlib import contextmanager
 from ctypes import *
 from ctypes.wintypes import BOOL
 from functools import wraps
@@ -304,7 +305,7 @@ class FDIFileManager(object):
        mappings between ints and file objects.  Can be subclassed to provide special
        open semantics, e.g. to facilitate string io and such
     """
-    def __init__(self, excinfo = None):
+    def __init__(self, source_name="", excinfo = None):
         self.filemap = {}
         if excinfo is None:
             excinfo = []
@@ -315,6 +316,31 @@ class FDIFileManager(object):
         self.write = PFNWRITE(self.pywrite)
         self.seek =  PFNSEEK(self.pylseek)
         self.close_cb = PFNCLOSE(self.pyclose)
+        self._source_name = str(os.fspath(source_name)) if source_name != "" else ""
+
+    @property
+    def source_name(self):
+        return self._source_name
+
+    @property
+    def cabinet_dir(self):
+        cabinet_dir, _ = os.path.split(os.path.normpath(self._source_name))
+        if cabinet_dir:
+            cabinet_dir += "\\"
+        return cabinet_dir
+
+    @property
+    def cabinet_name(self):
+        _, cabinet_name = os.path.split(os.path.normpath(self._source_name))
+        return cabinet_name
+
+    @property
+    def encoded_cabinet_dir(self):
+        return self.cabinet_dir.encode(sys.getfilesystemencoding(), errors="surrogateescape")
+
+    @property
+    def encoded_cabinet_name(self):
+        return self.cabinet_name.encode(sys.getfilesystemencoding(), errors="surrogateescape")
 
     def __enter__(self):
         return self
@@ -342,13 +368,30 @@ class FDIFileManager(object):
             raise tmp[1]
 
     def map(self, f):
+        """Register a file-like object and return the integer fd used by FDI callbacks."""
         fd = self.fileno
         self.fileno+=1
         self.filemap[fd] = f
         return fd
 
     def unmap(self, fd):
+        """Unregister and return a previously mapped file-like object by fd."""
         return self.filemap.pop(fd)
+
+    @contextmanager
+    def mapped(self, f):
+        """Context manager for temporary fd mapping.
+
+        Registers ``f`` and yields its fd. On context exit, closes and unregisters
+        the object if still mapped.
+        """
+        fd = self.map(f)
+        try:
+            yield fd
+        finally:
+            mapped = self.filemap.pop(fd, None)
+            if mapped is not None:
+                mapped.close()
 
     @FileErrwrap
     def pyopen(self, filename, mode, prot):
@@ -409,29 +452,28 @@ class FileProxy(object):
 
 class FDIObjectFileManager(FDIFileManager):
     """a subclass which enables us to use a file object as a source"""
-    fname = b"_file_"
-    def setfile(self, f):
-        """set the buffer associated with this object and return its name"""
+    fname = "_file_"
+
+    def __init__(self, f, excinfo = None):
+        super().__init__(self.fname, excinfo=excinfo)
         self.file = f
-        return self.fname
-    
+
     #open creates a file object out of a stored string
     @FileErrwrap
     def pyopen(self, filename, mode, prot):
-        if filename == self.fname:
+        if _to_text(filename) == self.fname:
             return self.map(FileProxy(self.file))
-        return FDIFileManager.pyopen(self, filename, mode, prot)
+        return super().pyopen(filename, mode, prot)
         
 def FileManager(fn):
     """Create a suitable file manager object to deal with the argument
     be it a filename, or a file like object"""
     if hasattr(fn, "read"):
         #oh, the filename really is a file object
-        result = FDIObjectFileManager()
-        fn = result.setfile(fn)
+        result = FDIObjectFileManager(fn)
     else:
-        result = FDIFileManager()
-    return result, fn
+        result = FDIFileManager(fn)
+    return result
 
 def is_cabinetfile(filename):
     """Returns True if the given file is a cabinet.
@@ -444,7 +486,7 @@ def is_cabinetfile(filename):
     if hasattr(filename, "read"):
         fileobj = filename
     else:
-        fileobj = open(filename, "rb")
+        fileobj = open(os.fspath(filename), "rb")
     fd = f.map(fileobj)
         
     hfdi = FDICreate(a.malloc, a.free, f.open, f.read, f.write, f.close_cb, f.seek, 0, byref(e))
@@ -467,14 +509,10 @@ class CabinetFile(object):
         self.a = FDIAllocator()
         self.e = ERF()
 
-        self.f, self.filename = FileManager(filename)                              
-        self.head, self.tail = os.path.split(os.path.normpath(self.filename))
-        if self.head:
-            self.head += "\\"
-        if isinstance(self.head, str):
-            self.head = self.head.encode(sys.getfilesystemencoding(), errors="surrogateescape")
-        if isinstance(self.tail, str):
-            self.tail = self.tail.encode(sys.getfilesystemencoding(), errors="surrogateescape")
+        self.f = FileManager(filename)
+        self.filename = self.f.source_name
+        self.head = self.f.encoded_cabinet_dir
+        self.tail = self.f.encoded_cabinet_name
             
         self.hfdi = FDICreate(self.a.malloc, self.a.free,
                               self.f.open, self.f.read, self.f.write, self.f.close_cb, self.f.seek,

@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Iterator
 from ctypes import byref
 from io import BytesIO
-import os.path
 import sys
 from os import PathLike
 from pathlib import Path
@@ -42,31 +41,16 @@ VisitCallback = Callable[[CabMember, bytes | None], bool | None]
 class CabFile:
     def __init__(self, source: CabSource):
         self._source = source
-        self._allocator: FDIAllocator | None = None
-        self._error_state: ERF | None = None
-        self._file_manager: FDIFileManager | None = None
-        self._cabinet_dir: bytes | None = None
-        self._cabinet_name: bytes | None = None
+        self._allocator: FDIAllocator = FDIAllocator()
+        self._error_state: ERF = ERF()
+        self._file_manager: FDIFileManager
+        self._file_manager = FileManager(self._source)
         self._fdi_handle = None
 
     def _open(self) -> None:
         if self._fdi_handle:
             return
 
-        self._allocator = FDIAllocator()
-        self._error_state = ERF()
-        self._file_manager, filename = FileManager(self._source)
-
-        head, tail = os.path.split(os.path.normpath(filename))
-        if head:
-            head += "\\"
-        if isinstance(head, str):
-            head = head.encode(sys.getfilesystemencoding(), errors="surrogateescape")
-        if isinstance(tail, str):
-            tail = tail.encode(sys.getfilesystemencoding(), errors="surrogateescape")
-
-        self._cabinet_dir = head
-        self._cabinet_name = tail
         self._fdi_handle = FDICreate(
             self._allocator.malloc,
             self._allocator.free,
@@ -107,7 +91,6 @@ class CabFile:
     @property
     def file_manager(self):
         """Low-level FDI file manager for map/unmap and callback-backed I/O."""
-        self._open()
         return self._file_manager
 
     def dispatch(
@@ -175,8 +158,8 @@ class CabFile:
         try:
             result = FDICopy(
                 self._fdi_handle,
-                self._cabinet_name,
-                self._cabinet_dir,
+                self.file_manager.encoded_cabinet_name,
+                self.file_manager.encoded_cabinet_dir,
                 0,
                 notify_callback,
                 None,
