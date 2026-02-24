@@ -28,6 +28,7 @@ dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/kristjanvalur/cabfile"
+Documentation = "https://kristjanvalur.github.io/cabfile/"
 
 [project.scripts]
 cabfile = "cabfile.cli:main"
