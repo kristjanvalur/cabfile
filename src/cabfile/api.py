@@ -17,6 +17,7 @@ from .core import (
     FDICreate,
     FDIDestroy,
     FDIAllocator,
+    FDIFileManager,
     FileManager,
     PFNFDINOTIFY,
     _to_text,
@@ -32,25 +33,29 @@ from .models import CabMember, CabinetInfo, DecodeFATTime
 
 CabSource = str | PathLike[str] | BinaryIO
 CabTargetDir = str | PathLike[str]
+DispatchOnDone = Callable[[], None]
+DispatchCopyResult = tuple[BinaryIO, DispatchOnDone] | None
+DispatchCopyCallback = Callable[[CabMember], DispatchCopyResult]
+VisitCallback = Callable[[CabMember, bytes | None], bool | None]
 
 
 class CabFile:
     def __init__(self, source: CabSource):
         self._source = source
-        self._a: FDIAllocator | None = None
-        self._e: ERF | None = None
-        self._f = None
-        self._head: bytes | None = None
-        self._tail: bytes | None = None
-        self._hfdi = None
+        self._allocator: FDIAllocator | None = None
+        self._error_state: ERF | None = None
+        self._file_manager: FDIFileManager | None = None
+        self._cabinet_dir: bytes | None = None
+        self._cabinet_name: bytes | None = None
+        self._fdi_handle = None
 
     def _open(self) -> None:
-        if self._hfdi:
+        if self._fdi_handle:
             return
 
-        self._a = FDIAllocator()
-        self._e = ERF()
-        self._f, filename = FileManager(self._source)
+        self._allocator = FDIAllocator()
+        self._error_state = ERF()
+        self._file_manager, filename = FileManager(self._source)
 
         head, tail = os.path.split(os.path.normpath(filename))
         if head:
@@ -60,51 +65,25 @@ class CabFile:
         if isinstance(tail, str):
             tail = tail.encode(sys.getfilesystemencoding(), errors="surrogateescape")
 
-        self._head = head
-        self._tail = tail
-        self._hfdi = FDICreate(
-            self._a.malloc,
-            self._a.free,
-            self._f.open,
-            self._f.read,
-            self._f.write,
-            self._f.close_cb,
-            self._f.seek,
+        self._cabinet_dir = head
+        self._cabinet_name = tail
+        self._fdi_handle = FDICreate(
+            self._allocator.malloc,
+            self._allocator.free,
+            self._file_manager.open,
+            self._file_manager.read,
+            self._file_manager.write,
+            self._file_manager.close_cb,
+            self._file_manager.seek,
             0,
-            byref(self._e),
+            byref(self._error_state),
         )
 
     def _close_native(self) -> None:
-        hfdi = getattr(self, "_hfdi", None)
-        if hfdi:
-            FDIDestroy(hfdi)
-            self._hfdi = None
-
-    def _fdicopy_native(self, callback, err_success: Callable[[], bool] | None = None) -> int:
-        self._open()
-        excinfo = []
-
-        def wrap(fdint, pnotify):
-            try:
-                return callback(fdint, pnotify)
-            except Exception:
-                excinfo[:] = sys.exc_info()
-                return -1
-
-        self._e.clear()
-        notify_callback = PFNFDINOTIFY(wrap)
-        try:
-            result = FDICopy(self._hfdi, self._tail, self._head, 0, notify_callback, None, None)
-            if not result:
-                if excinfo:
-                    raise excinfo[1]
-                self._f.raise_error()
-                if err_success is not None and err_success():
-                    return result
-                self._e.raise_error()
-            return result
-        finally:
-            self._f.close()
+        fdi_handle = getattr(self, "_fdi_handle", None)
+        if fdi_handle:
+            FDIDestroy(fdi_handle)
+            self._fdi_handle = None
 
     def __enter__(self) -> Self:
         return self
@@ -119,21 +98,40 @@ class CabFile:
         return False
 
     def __del__(self):
-        if FDIDestroy and hasattr(self, "_hfdi"):
+        if FDIDestroy and hasattr(self, "_fdi_handle"):
             self.close()
 
     def close(self) -> None:
         self._close_native()
 
-    def _fdicopy_dispatch(
+    @property
+    def file_manager(self):
+        """Low-level FDI file manager for map/unmap and callback-backed I/O."""
+        self._open()
+        return self._file_manager
+
+    def dispatch(
         self,
-        on_copy_file: Callable[[CabMember], tuple[int, Callable[[], None]] | None],
+        on_copy_file: DispatchCopyCallback,
     ) -> bool:
-        aborted = False
-        pending: dict[int, Callable[[], None]] = {}
+        """Low-level FDICopy dispatch API.
+
+        For each member (``fdintCOPY_FILE``), ``on_copy_file`` is called with a
+        ``CabMember`` instance.
+
+        - Return ``None`` to skip member data copy.
+        - Return ``(file_like, on_done)`` where ``file_like`` is writable and
+          ``on_done()`` runs after data is written and unmapped, but before
+          dispatch closes the file object.
+
+        Raise ``CabStopIteration`` to stop traversal early. Returns ``False`` for
+        early-stop, ``True`` otherwise.
+        """
+        self._open()
+        pending_by_fd: dict[int, tuple[BinaryIO, Callable[[], None]]] = {}
+        callback_exception = []
 
         def on_notify(fdint, pnotify):
-            nonlocal aborted
             notify = pnotify.contents
             if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
                 return 0
@@ -142,38 +140,62 @@ class CabFile:
                 member.file_size = notify.cb
                 member.external_attr = notify.attribs
 
-                try:
-                    result = on_copy_file(member)
-                except CabStopIteration:
-                    aborted = True
-                    return -1
+                result = on_copy_file(member)
 
                 if result is None:
                     return 0
 
-                fd, on_close_file = result
-                pending[int(fd)] = on_close_file
+                file_like, on_done = result
+
+                fd = self.file_manager.map(file_like)
+                pending_by_fd[int(fd)] = (file_like, on_done)
                 return fd
 
             if fdint == fdintCLOSE_FILE_INFO:
                 fd = int(notify.hf)
-                on_close_file = pending.pop(fd, None)
-                if on_close_file is None:
+                pending_entry = pending_by_fd.pop(fd, None)
+                if pending_entry is None:
                     return 1
-                try:
-                    on_close_file()
-                except CabStopIteration:
-                    aborted = True
-                    return -1
+                mapped = self.file_manager.unmap(fd)
+                _, on_done = pending_entry
+                on_done()
+                mapped.close()
                 return 1
             return -1
 
-        self._fdicopy_native(on_notify, err_success=lambda: aborted)
-        return not aborted
+        def wrap(fdint, pnotify):
+            try:
+                return on_notify(fdint, pnotify)
+            except Exception:
+                callback_exception[:] = sys.exc_info()
+                return -1
+
+        self._error_state.clear()
+        notify_callback = PFNFDINOTIFY(wrap)
+        try:
+            result = FDICopy(
+                self._fdi_handle,
+                self._cabinet_name,
+                self._cabinet_dir,
+                0,
+                notify_callback,
+                None,
+                None,
+            )
+            if not result:
+                if callback_exception:
+                    if isinstance(callback_exception[1], CabStopIteration):
+                        return False
+                    raise callback_exception[1]
+                self.file_manager.raise_error()
+                self._error_state.raise_error()
+            return True
+        finally:
+            self.file_manager.close()
 
     def _fdicopy_visit_native(
         self,
-        callback: Callable[[CabMember, bytes | None], bool | None],
+        callback: VisitCallback,
         *,
         with_data: bool,
         predicate: Callable[[CabMember], bool] | None = None,
@@ -188,33 +210,35 @@ class CabFile:
                 return None
 
             sink = BytesIO()
-            fd = self._f.map(sink)
 
-            def on_close_file() -> None:
-                mapped_sink = self._f.unmap(fd)
-                data = mapped_sink.getvalue()
-                mapped_sink.close()
-                if callback(member, data) is False:
+            def on_done() -> None:
+                if callback(member, sink.getvalue()) is False:
                     raise CabStopIteration()
 
-            return fd, on_close_file
+            return sink, on_done
 
-        return self._fdicopy_dispatch(on_copy_file)
+        return self.dispatch(on_copy_file)
 
     def visit(
         self,
-        callback: Callable[[CabMember, bytes | None], bool | None],
+        callback: VisitCallback,
         *,
         with_data: bool = False,
     ) -> bool:
+        """Visit each member and invoke ``callback(member, data_or_none)``.
+
+        Returns ``False`` when traversal is stopped early (callback returns
+        ``False`` or raises ``CabStopIteration``), otherwise ``True``.
+        """
         return self._fdicopy_visit_native(callback, with_data=with_data)
 
     def walk(
         self,
-        callback: Callable[[CabMember, bytes | None], bool | None],
+        callback: VisitCallback,
         *,
         with_data: bool = False,
     ) -> bool:
+        """Alias for ``visit()``."""
         return self.visit(callback, with_data=with_data)
 
     def __iter__(self) -> Iterator[str]:
@@ -258,6 +282,7 @@ class CabFile:
         return member
 
     def keys(self) -> Iterable[str]:
+        """Return member names in cabinet order."""
         names: list[str] = []
 
         def callback(member: CabMember, _data: bytes | None) -> bool:
@@ -269,6 +294,7 @@ class CabFile:
         return names
 
     def values(self) -> Iterable[CabMember]:
+        """Return member metadata objects in cabinet order."""
         members: list[CabMember] = []
 
         def callback(member: CabMember, _data: bytes | None) -> bool:
@@ -279,6 +305,7 @@ class CabFile:
         return members
 
     def items(self) -> Iterable[tuple[str, CabMember]]:
+        """Return ``(name, member)`` pairs in cabinet order."""
         items: list[tuple[str, CabMember]] = []
 
         def callback(member: CabMember, _data: bytes | None) -> bool:
@@ -290,6 +317,10 @@ class CabFile:
         return items
 
     def read(self, name: str) -> bytes:
+        """Read a single member payload by name.
+
+        Raises ``KeyError`` when the member is not present.
+        """
         payload: bytes | None = None
 
         def callback(_member: CabMember, data: bytes | None) -> bool:
@@ -307,6 +338,10 @@ class CabFile:
         return payload
 
     def read_many(self, names: Iterable[str]) -> Iterator[tuple[str, bytes]]:
+        """Yield ``(name, payload)`` for requested names that exist.
+
+        Output preserves the caller-provided ``names`` ordering.
+        """
         requested_names = list(names)
         if not requested_names:
             return iter(())
@@ -328,6 +363,10 @@ class CabFile:
         return iter((name, by_name[name]) for name in requested_names if name in by_name)
 
     def extract(self, name: str, target_dir: CabTargetDir) -> None:
+        """Extract one member to ``target_dir``.
+
+        Raises ``KeyError`` when the member is not present.
+        """
         out_dir = Path(target_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         wrote = False
@@ -351,6 +390,7 @@ class CabFile:
             raise KeyError(name)
 
     def extract_all(self, target_dir: CabTargetDir, members: Iterable[str] | None = None) -> None:
+        """Extract all members, or only the selected ``members``, to ``target_dir``."""
         out_dir = Path(target_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         selected = set(members) if members is not None else None
@@ -370,6 +410,7 @@ class CabFile:
         )
 
     def test(self) -> bool:
+        """Test cabinet readability by visiting all members with data."""
         return self.visit(lambda _member, _data: True, with_data=True)
 
 __all__ = [
