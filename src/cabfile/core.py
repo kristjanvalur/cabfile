@@ -26,6 +26,10 @@ def _to_text(value):
     return value
 
 
+INT_PTR = c_ssize_t
+_STRUCT_PACK = 4 if sizeof(c_void_p) == 4 else 8
+
+
 ##################################
 # First, we declare the cabinet FDI API in terms of ctypes
 # FDI is the decompression part of the cabinet API
@@ -38,7 +42,7 @@ USHORT = c_ushort
 UOFF = COFF = CHECKSUM = c_ulong
 
 class ERF(Structure):
-    _pack_ = 4
+    _pack_ = _STRUCT_PACK
     _fields_ = [("erfOper", c_int),
                 ("erfType", c_int),
                 ("fError", BOOL)]
@@ -136,7 +140,7 @@ HFDI = c_void_p
 
 #cabinet info
 class FDICABINETINFO(Structure):
-    _pack_ = 4
+    _pack_ = _STRUCT_PACK
     _fields_ = [("cbCabinet", c_long),
                 ("cFolders", USHORT),
                 ("cFiles", USHORT),
@@ -153,20 +157,20 @@ FDIDECRYPTTYPE = _enum(["fdidtNEW_CABINET", "fdidtNEW_FOLDER", "fdidtDECRYPT"])
 class FDIDECRYPT(Structure):
     class _U(Union):
         class Cabinet(Structure):
-            _pack_ = 4
+            _pack_ = _STRUCT_PACK
             _fields_ = [("pHeaderReserve", c_void_p),
                         ("cbHeaderReserve", USHORT),
                         ("setID", USHORT),
                         ("iCabinet", c_int)]
 
         class Folder(Structure):
-            _pack_ = 4
+            _pack_ = _STRUCT_PACK
             _fields_ = [("pFolderReserve", c_void_p),
                         ("cbFolderReserve", USHORT),
                         ("iFolder", USHORT)]
 
         class Decrypt(Structure):
-            _pack_ = 4
+            _pack_ = _STRUCT_PACK
             _fields_ = [("pDataReserve", c_void_p),
                         ("cbDataReserve", USHORT),
                         ("pData", c_void_p),
@@ -176,7 +180,7 @@ class FDIDECRYPT(Structure):
 
         _fields_ = [("cabinet", Cabinet), ("folder", Folder), ("decrypt", Decrypt)]
 
-    _pack_ = 4
+    _pack_ = _STRUCT_PACK
     _fields_ = [("fdidt", FDIDECRYPTTYPE),
                 ("pvUser", py_object),
                 ("u", _U)]
@@ -188,11 +192,11 @@ PFNALLOC = CFUNCTYPE(c_void_p, c_ulong)
 PFNFREE  = CFUNCTYPE(None, c_void_p)
 
 #file iofunction callbacks
-PFNOPEN  = CFUNCTYPE(c_int, c_char_p, c_int, c_int)
-PFNREAD  = CFUNCTYPE(c_uint, c_int, c_void_p, c_uint)
-PFNWRITE = CFUNCTYPE(c_uint, c_int, c_void_p, c_uint)
-PFNCLOSE = CFUNCTYPE(c_int, c_int)
-PFNSEEK  = CFUNCTYPE(c_long, c_int, c_long, c_int)
+PFNOPEN  = CFUNCTYPE(INT_PTR, c_char_p, c_int, c_int)
+PFNREAD  = CFUNCTYPE(c_uint, INT_PTR, c_void_p, c_uint)
+PFNWRITE = CFUNCTYPE(c_uint, INT_PTR, c_void_p, c_uint)
+PFNCLOSE = CFUNCTYPE(c_int, INT_PTR)
+PFNSEEK  = CFUNCTYPE(c_long, INT_PTR, c_long, c_int)
 
 
 #decryption callback (not used)
@@ -201,13 +205,13 @@ PFNFDIDECRYPT = CFUNCTYPE(c_int, POINTER(FDIDECRYPT))
 
 #notification structure
 class FDINOTIFICATION(Structure):
-    _pack_ = 4
+    _pack_ = _STRUCT_PACK
     _fields_ = [("cb", c_long),
                 ("psz1", c_char_p),
                 ("psz2", c_char_p),
                 ("psz3", c_char_p),     #Points to a 256 character buffer
                 ("pv", py_object),      #value for client
-                ("hf", c_int),
+                ("hf", INT_PTR),
                 ("date", USHORT),
                 ("time", USHORT),
                 ("attribs", USHORT),
@@ -220,7 +224,7 @@ FDINOTIFICATIONTYPE = _enum(["fdintCABINET_INFO", "fdintPARTIAL_FILE", "fdintCOP
                              "fdintCLOSE_FILE_INFO", "fdintNEXT_CABINET", "fdintENUMERATE"])
 
 
-PFNFDINOTIFY = CFUNCTYPE(c_int, FDINOTIFICATIONTYPE, POINTER(FDINOTIFICATION))
+PFNFDINOTIFY = CFUNCTYPE(INT_PTR, FDINOTIFICATIONTYPE, POINTER(FDINOTIFICATION))
 
 
 
@@ -476,7 +480,8 @@ class CabinetFile(object):
                 return -1
 
         self.e.clear()
-        r = FDICopy(self.hfdi, self.tail, self.head, 0, PFNFDINOTIFY(wrap), None, None)
+        notify_callback = PFNFDINOTIFY(wrap)
+        r = FDICopy(self.hfdi, self.tail, self.head, 0, notify_callback, None, None)
         if not r:
             if excinfo:
                 raise excinfo[1]
