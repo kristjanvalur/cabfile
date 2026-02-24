@@ -45,7 +45,10 @@ def is_cabinet(source: CabSource) -> bool:
 
 
 def probe(source: CabSource) -> CabSummary:
-    """Return basic cabinet summary metadata for ``source``."""
+    """Return cabinet-level summary metadata for ``source``.
+
+    Raises ``CabinetError`` when ``source`` is not a cabinet.
+    """
     info = _is_cabinetfile(source)
     if not info:
         raise CabinetError("Not a cabinet file")
@@ -59,6 +62,8 @@ def probe(source: CabSource) -> CabSummary:
 
 
 class CabFile:
+    """High-level cabinet reader with member-centric and ZipFile-compatible APIs."""
+
     def __init__(self, source: CabSource):
         self._source = source
         self._allocator: FDIAllocator = FDIAllocator()
@@ -118,7 +123,7 @@ class CabFile:
         ``CabMember`` instance.
 
         - Return ``None`` to skip member data copy.
-        - Return ``(file_like, on_done)`` where ``file_like`` is writable and
+                - Return ``(file_like, on_done)`` where ``file_like`` is writable and
                     ``on_done()`` runs after data is written and unmapped. The callback
                     owns finalization, including closing/reusing the file-like object.
 
@@ -352,7 +357,10 @@ class CabFile:
             print("%-46s %19s %12d" % (member_name, timestamp, member.file_size), file=file)
 
     def read(self, name: str, pwd: bytes | None = None) -> bytes:
-        """Read member payload bytes by name (ZipFile-compatible shape)."""
+        """Read payload bytes for one member name (ZipFile-compatible shape).
+
+        Note: ``pwd`` is unsupported for CAB and raises ``NotImplementedError``.
+        """
         if pwd is not None:
             raise NotImplementedError("CAB decryption is not supported")
         for member, payload in self.read_members([name]):
@@ -366,7 +374,10 @@ class CabFile:
         path: CabTargetDir | None = None,
         pwd: bytes | None = None,
     ) -> str:
-        """Extract one member (ZipFile-compatible shape) and return destination path."""
+        """Extract one member and return its destination path.
+
+        Note: ``pwd`` is unsupported for CAB and raises ``NotImplementedError``.
+        """
         if pwd is not None:
             raise NotImplementedError("CAB decryption is not supported")
 
@@ -387,7 +398,10 @@ class CabFile:
         members: Iterable[str] | None = None,
         pwd: bytes | None = None,
     ) -> None:
-        """Extract all or selected members (ZipFile-compatible shape)."""
+        """Extract all members, or selected members, to ``path``.
+
+        Note: ``pwd`` is unsupported for CAB and raises ``NotImplementedError``.
+        """
         if pwd is not None:
             raise NotImplementedError("CAB decryption is not supported")
 
@@ -396,7 +410,7 @@ class CabFile:
             pass
 
     def test(self) -> bool:
-        """Test cabinet readability by copying all member data to a null sink."""
+        """Test cabinet readability by copying all member data to in-memory sinks."""
         try:
             def on_copy_file(_member: CabMember):
                 sink = BytesIO()

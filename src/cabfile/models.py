@@ -51,6 +51,8 @@ CabinetInfo = CabMember
 
 @dataclass(slots=True)
 class CabSummary:
+    """Top-level cabinet summary metadata returned by ``probe()``."""
+
     file_count: int
     folder_count: int
     set_id: int
@@ -58,7 +60,10 @@ class CabSummary:
 
 
 def DecodeFATTime(FATdate, FATtime):
-    """Convert FAT date/time bitfields to a ``datetime`` object."""
+    """Convert FAT date/time bitfields to ``datetime``.
+
+    Returns ``None`` when the bitfields encode an invalid date/time.
+    """
     day = FATdate & 0x1F
     month = (FATdate >> 5) & 0xF
     year = 1980 + (FATdate >> 9)

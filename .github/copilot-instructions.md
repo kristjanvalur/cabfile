@@ -27,3 +27,15 @@ uv run python -c "import ctypes, sys, pytest; ctypes.windll.kernel32.SetErrorMod
 - Prefer targeted tests first, then broader suite runs.
 - When creating CAB fixtures for tests, use test-only tooling under `tests/`.
 - If native crashes occur, isolate whether fixture generation or CAB reading is at fault by validating generated `.cab` with native tools (e.g. `expand -D`).
+
+## Documentation style
+
+Align docs and docstrings with the style used in `kristjanvalur/py-asynkit`:
+
+- Use behavior-first wording (what it does, then constraints/edge-cases).
+- Keep sections clearly structured with short headings and logical progression.
+- Prefer concrete examples for non-obvious usage; include short runnable snippets in README/docs.
+- Use explicit compatibility notes when behavior depends on Python version or platform.
+- Call out caveats with clear note markers (for example: "Note:" / "Warning:") instead of burying them in paragraphs.
+- For API docstrings, keep the first line concise, then add a short details block only when needed.
+- Keep tone practical and direct; avoid marketing-style language in this project.

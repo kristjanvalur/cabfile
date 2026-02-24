@@ -5,9 +5,7 @@
 #   Uses ctypes to interface with the cabinet.dll file included with windows.
 
 
-"""
-Utility module to read windows cabinet files.
-"""
+"""Low-level ctypes bindings and legacy helpers for Windows cabinet files."""
 
 import sys
 import os.path
@@ -295,7 +293,7 @@ FDIDestroy.restype = BOOL
 
 
 class FDIAllocator(object):
-    """An allocator class that provides allocator callbacks for the FDI functions"""
+    """Provide allocation callbacks required by FDI functions."""
     def __init__(self):
         self._allocs = {}
         self.malloc = PFNALLOC(self.pymalloc)
@@ -316,9 +314,7 @@ class FDIAllocator(object):
 
 
 def FileErrwrap(f):
-    """A decorator to handle exceptions in the file manager callbacks.  Stores them
-       in self._excinfo
-    """
+    """Capture callback exceptions in ``self._excinfo`` and return ``-1``."""
     @wraps(f)
     def helper(self, *args):
         try:
@@ -331,9 +327,9 @@ def FileErrwrap(f):
 
 
 class FDIFileManager(object):
-    """A class that provides the file callbacks for the FDI routines and maintains
-       mappings between ints and file objects.  Can be subclassed to provide special
-       open semantics, e.g. to facilitate string io and such
+    """Provide FDI file callbacks and fd-to-file-object mappings.
+
+    Subclasses can override open behavior for custom sources.
     """
     def __init__(self, source_name="", excinfo = None):
         self.filemap = {}
@@ -454,7 +450,7 @@ class FDIFileManager(object):
         return self.filemap[fd].tell()
 
 class FileProxy(object):
-    """A class that allows proxying of a file, thereby supporting many filepointers"""
+    """Proxy a shared file object while maintaining an independent position."""
     def __init__(self, f):
         self.f = f
         self.fp = 0
@@ -481,7 +477,7 @@ class FileProxy(object):
         
 
 class FDIObjectFileManager(FDIFileManager):
-    """a subclass which enables us to use a file object as a source"""
+    """FDI file manager variant that uses a provided file-like source object."""
     fname = "_file_"
 
     def __init__(self, f, excinfo = None):
@@ -496,8 +492,7 @@ class FDIObjectFileManager(FDIFileManager):
         return super().pyopen(filename, mode, prot)
         
 def FileManager(fn):
-    """Create a suitable file manager object to deal with the argument
-    be it a filename, or a file like object"""
+    """Create a file manager for either a filesystem path or file-like source."""
     if hasattr(fn, "read"):
         #oh, the filename really is a file object
         result = FDIObjectFileManager(fn)
@@ -506,8 +501,9 @@ def FileManager(fn):
     return result
 
 def is_cabinetfile(filename):
-    """Returns True if the given file is a cabinet.
-    The argument can be a filename or a file object.
+    """Return cabinet header info when valid, otherwise ``False``.
+
+    The argument can be a path-like value or a readable binary file object.
     """
     a = FDIAllocator()
     e = ERF()
@@ -531,8 +527,9 @@ def is_cabinetfile(filename):
 
 
 class CabinetFile(object):
-    """A class for reading cabinets.  Similar to zipfile.ZipFile.
-    Only single-file cabinets are supported
+    """Legacy cabinet reader API, roughly similar to ``zipfile.ZipFile``.
+
+    Only single-file cabinets are supported.
     """
     def __init__(self, filename, mode='r'):
         self.hfdi = None
@@ -633,7 +630,7 @@ class CabinetFile(object):
         return mine[0]
 
     def read(self, name):
-        """Return file bytes (as a string) for name."""
+        """Return payload bytes for one name, or a list of bytes for many names."""
         result = []
         single_name = isinstance(name, str)
         names = {name} if single_name else set(name)
@@ -658,9 +655,7 @@ class CabinetFile(object):
         return result[0] if single_name else result
         
     def extract(self, target, names=None):
-        """extract files into a target directory.
-        Optionally, a set of names may be given
-        """
+        """Extract all files (or selected names) into ``target`` directory."""
         selected_names = set(names) if names else None
         def callback(fdint, pnotify):
             notify = pnotify.contents
@@ -685,7 +680,7 @@ class CabinetFile(object):
         self.__FDICopy(callback)
 
     def testcabinet(self):
-        """verify that the archive is ok"""
+        """Return ``True`` when the cabinet can be fully streamed without errors."""
         def callback(fdint, pnotify):
             #read and discard all data
             notify = pnotify.contents
