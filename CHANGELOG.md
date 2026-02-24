@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## 2.0.0 - 2026-02-24
+
+### Release
+
+- Promote `2.0.0rc1` to stable `2.0.0`.
+
+### Highlights
+
+- Modernized API centered on `CabFile` for Python 3.11+.
+- Added ZipFile-style compatibility APIs and CLI (`cabfile`, `python -m cabfile`).
+- Added modern CI, publishing, and docs pipelines with MkDocs API reference generation.
+
 ## 2.0.0rc1 - 2026-02-24
 
 ### Modernization highlights
