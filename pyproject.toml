@@ -32,8 +32,8 @@ Homepage = "https://github.com/kristjanvalur/cabfile"
 [tool.hatch.build.targets.wheel]
 packages = ["src/cabfile"]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
   "pytest>=8.0",
 ]
 
