@@ -16,6 +16,9 @@ from ctypes import *
 from ctypes.wintypes import BOOL
 from functools import wraps
 
+from .errors import CabPlatformError, CabinetError
+from .models import CabinetInfo, DecodeFATTime
+
 
 def _to_text(value):
     if isinstance(value, bytes):
@@ -33,8 +36,6 @@ USHORT = c_ushort
 
 ##Common fdi/fci types
 UOFF = COFF = CHECKSUM = c_ulong
-
-class CabinetError(RuntimeError): pass
 
 class ERF(Structure):
     _pack_ = 4
@@ -229,7 +230,7 @@ PFNFDINOTIFY = CFUNCTYPE(c_int, FDINOTIFICATIONTYPE, POINTER(FDINOTIFICATION))
 try:
     FDICreate = cdll.cabinet.FDICreate
 except Exception:
-    raise ImportError("cabinet only works on windows")
+    raise CabPlatformError("cabinet only works on windows")
 FDICreate.restype = HFDI
 FDICreate.argtypes = [PFNALLOC, PFNFREE, PFNOPEN, PFNREAD, PFNWRITE, PFNCLOSE, PFNSEEK,
                       c_int, POINTER(ERF)]
@@ -607,27 +608,6 @@ class CabinetFile(object):
         except (CabinetError, IOError):
             return False
             
-class CabinetInfo(object):
-    """A simple class to encapsulate information about cabinet members"""
-    def __init__(self, filename=None, date_time=None):
-        self.filename, self.date_time = filename, date_time
-        self.file_size = 0
-        self.external_attr = 0
-
-    def __repr__(self):
-        return "<CabinetInfo %s, size=%s, date=%r, attrib=%x>"%(self.filename, self.file_size, self.date_time, self.external_attr)
-
-def DecodeFATTime(FATdate, FATtime):
-    """Convert the 2x16 bits of time in the FAT system to a tuple"""
-    day = FATdate & 0x1f
-    month = (FATdate >> 5) & 0xf
-    year = 1980 + (FATdate >> 9)
-    sec = 2 * (FATtime & 0x1f)
-    min = (FATtime >> 5) & 0x3f
-    hour = FATtime >> 11
-    return (year, month, day, hour, min, sec)
-
-
 def main(args = None):
     import textwrap
     USAGE=textwrap.dedent("""\
