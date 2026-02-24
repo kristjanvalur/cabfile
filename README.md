@@ -32,6 +32,27 @@ print(summary.file_count)
 - ZipFile-compatible methods/properties for drop-in usage patterns:
     - `read`, `extract`, `extractall`, `namelist`, `infolist`, `getinfo`, `printdir`, `filelist`, `NameToInfo`
 
+## CLI
+
+The package includes a ZipFile-style CLI via the `cabfile` script or `python -m cabfile`.
+
+```bash
+# List archive members
+cabfile -l archive.cab
+
+# Test archive readability
+cabfile -t archive.cab
+
+# Extract all members to target directory
+cabfile -e archive.cab output_dir
+```
+
+Note: Exit codes are process-style:
+
+- `0` success
+- `1` test command found unreadable archive data
+- `2` usage or cabinet read error
+
 ## Compatibility
 
 Note: This project uses `ctypes` with Windows `cabinet.dll` APIs.

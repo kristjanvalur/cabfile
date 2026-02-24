@@ -8,6 +8,7 @@ from .api import (
     is_cabinet,
     probe,
 )
+from .cli import main
 
 __all__ = [
     "CabinetError",
@@ -18,4 +19,5 @@ __all__ = [
     "CabStopIteration",
     "is_cabinet",
     "probe",
+    "main",
 ]

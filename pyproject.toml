@@ -29,6 +29,9 @@ dependencies = []
 [project.urls]
 Homepage = "https://github.com/kristjanvalur/cabfile"
 
+[project.scripts]
+cabfile = "cabfile.cli:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/cabfile"]
 
