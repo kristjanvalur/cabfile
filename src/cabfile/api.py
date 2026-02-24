@@ -127,7 +127,7 @@ class CabFile:
         """
         self._open()
         pending_by_fd: dict[int, tuple[BinaryIO, Callable[[], None]]] = {}
-        callback_exception: list[BaseException] = []
+        callback_exception: BaseException | None = None
 
         def on_notify(fdint, pnotify):
             notify = pnotify.contents
@@ -161,10 +161,11 @@ class CabFile:
             return -1
 
         def wrap(fdint, pnotify):
+            nonlocal callback_exception
             try:
                 return on_notify(fdint, pnotify)
-            except Exception as exc:
-                callback_exception[:] = [exc]
+            except BaseException as exc:
+                callback_exception = exc
                 return -1
 
         self._error_state.clear()
@@ -180,10 +181,10 @@ class CabFile:
                 None,
             )
             if not result:
-                if callback_exception:
-                    if isinstance(callback_exception[0], CabStopIteration):
+                if callback_exception is not None:
+                    if isinstance(callback_exception, CabStopIteration):
                         return False
-                    raise callback_exception[0]
+                    raise callback_exception
                 self.file_manager.raise_error()
                 self._error_state.raise_error()
             return True
