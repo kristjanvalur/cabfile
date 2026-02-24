@@ -63,12 +63,6 @@ class CabFile:
             byref(self._error_state),
         )
 
-    def _close_native(self) -> None:
-        fdi_handle = getattr(self, "_fdi_handle", None)
-        if fdi_handle:
-            FDIDestroy(fdi_handle)
-            self._fdi_handle = None
-
     def __enter__(self) -> Self:
         return self
 
@@ -86,7 +80,9 @@ class CabFile:
             self.close()
 
     def close(self) -> None:
-        self._close_native()
+        if self._fdi_handle:
+            FDIDestroy(self._fdi_handle)
+            self._fdi_handle = None
 
     @property
     def file_manager(self):
@@ -176,7 +172,7 @@ class CabFile:
         finally:
             self.file_manager.close()
 
-    def _fdicopy_visit_native(
+    def _fdicopy_visit(
         self,
         callback: VisitCallback,
         *,
@@ -213,7 +209,7 @@ class CabFile:
         Returns ``False`` when traversal is stopped early (callback returns
         ``False`` or raises ``CabStopIteration``), otherwise ``True``.
         """
-        return self._fdicopy_visit_native(callback, with_data=with_data)
+        return self._fdicopy_visit(callback, with_data=with_data)
 
     def walk(
         self,
@@ -240,7 +236,7 @@ class CabFile:
             found = member.name == name
             return not found
 
-        self._fdicopy_visit_native(
+        self._fdicopy_visit(
             callback,
             with_data=False,
             predicate=lambda member: member.name == name,
@@ -255,7 +251,7 @@ class CabFile:
             member = current
             return False
 
-        self._fdicopy_visit_native(
+        self._fdicopy_visit(
             callback,
             with_data=False,
             predicate=lambda current: current.name == name,
@@ -311,7 +307,7 @@ class CabFile:
             payload = data
             return False
 
-        self._fdicopy_visit_native(
+        self._fdicopy_visit(
             callback,
             with_data=True,
             predicate=lambda member: member.name == name,
@@ -337,7 +333,7 @@ class CabFile:
                 by_name[member.name] = data
             return True
 
-        self._fdicopy_visit_native(
+        self._fdicopy_visit(
             callback,
             with_data=True,
             predicate=lambda member: member.name in requested_set,
@@ -364,7 +360,7 @@ class CabFile:
             wrote = True
             return False
 
-        self._fdicopy_visit_native(
+        self._fdicopy_visit(
             callback,
             with_data=True,
             predicate=lambda member: member.name == name,
@@ -386,7 +382,7 @@ class CabFile:
             destination.write_bytes(data)
             return True
 
-        self._fdicopy_visit_native(
+        self._fdicopy_visit(
             callback,
             with_data=True,
             predicate=None if selected is None else (lambda member: member.name in selected),
@@ -394,7 +390,10 @@ class CabFile:
 
     def test(self) -> bool:
         """Test cabinet readability by visiting all members with data."""
-        return self.visit(lambda _member, _data: True, with_data=True)
+        try:
+            return self.visit(lambda _member, _data: True, with_data=True)
+        except (CabinetError, IOError, OSError):
+            return False
 
 __all__ = [
     "CabinetError",

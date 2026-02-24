@@ -4,11 +4,6 @@ from .api import (
     CabPlatformError,
     CabStopIteration,
     CabinetError,
-    CabinetFile,
-    CabinetInfo,
-    DecodeFATTime,
-    is_cabinetfile,
-    main,
 )
 
 __all__ = [
@@ -17,9 +12,4 @@ __all__ = [
     "CabFile",
     "CabPlatformError",
     "CabStopIteration",
-    "CabinetFile",
-    "CabinetInfo",
-    "DecodeFATTime",
-    "is_cabinetfile",
-    "main",
 ]
