@@ -1,11 +1,29 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
+from ctypes import byref
+import os.path
+import sys
 from os import PathLike
 from types import TracebackType
 from typing import BinaryIO, Self
 
-from .core import CabinetFile, is_cabinetfile, main
+from .core import (
+    CabinetFile,
+    ERF,
+    FDICopy,
+    FDICreate,
+    FDIDestroy,
+    FDIAllocator,
+    FileManager,
+    PFNFDINOTIFY,
+    _to_text,
+    fdintCABINET_INFO,
+    fdintCOPY_FILE,
+    fdintENUMERATE,
+    is_cabinetfile,
+    main,
+)
 from .errors import CabFileError, CabPlatformError, CabinetError
 from .models import CabinetInfo, DecodeFATTime
 
@@ -17,6 +35,70 @@ class CabFile:
     def __init__(self, source: CabSource):
         self._archive: CabinetFile
         self._archive = CabinetFile(source)
+        self._source = source
+        self._a: FDIAllocator | None = None
+        self._e: ERF | None = None
+        self._f = None
+        self._head: bytes | None = None
+        self._tail: bytes | None = None
+        self._hfdi = None
+
+    def _open(self) -> None:
+        if self._hfdi:
+            return
+
+        self._a = FDIAllocator()
+        self._e = ERF()
+        self._f, filename = FileManager(self._source)
+
+        head, tail = os.path.split(os.path.normpath(filename))
+        if head:
+            head += "\\"
+        if isinstance(head, str):
+            head = head.encode(sys.getfilesystemencoding(), errors="surrogateescape")
+        if isinstance(tail, str):
+            tail = tail.encode(sys.getfilesystemencoding(), errors="surrogateescape")
+
+        self._head = head
+        self._tail = tail
+        self._hfdi = FDICreate(
+            self._a.malloc,
+            self._a.free,
+            self._f.open,
+            self._f.read,
+            self._f.write,
+            self._f.close,
+            self._f.seek,
+            0,
+            byref(self._e),
+        )
+
+    def _close_native(self) -> None:
+        hfdi = getattr(self, "_hfdi", None)
+        if hfdi:
+            FDIDestroy(hfdi)
+            self._hfdi = None
+
+    def _fdicopy_native(self, callback) -> int:
+        self._open()
+        excinfo = []
+
+        def wrap(fdint, pnotify):
+            try:
+                return callback(fdint, pnotify)
+            except Exception:
+                excinfo[:] = sys.exc_info()
+                return -1
+
+        self._e.clear()
+        notify_callback = PFNFDINOTIFY(wrap)
+        result = FDICopy(self._hfdi, self._tail, self._head, 0, notify_callback, None, None)
+        if not result:
+            if excinfo:
+                raise excinfo[1]
+            self._f.raise_error()
+            self._e.raise_error()
+        return result
 
     def __enter__(self) -> Self:
         return self
@@ -30,11 +112,30 @@ class CabFile:
         self.close()
         return False
 
+    def __del__(self):
+        if FDIDestroy and (hasattr(self, "_archive") or hasattr(self, "_hfdi")):
+            self.close()
+
     def close(self) -> None:
-        self._archive.close()
+        self._close_native()
+        archive = getattr(self, "_archive", None)
+        if archive is not None:
+            archive.close()
 
     def names(self) -> Iterator[str]:
-        return iter(self._archive.namelist())
+        names: list[str] = []
+
+        def callback(fdint, pnotify):
+            notify = pnotify.contents
+            if fdint in [fdintCABINET_INFO, fdintENUMERATE]:
+                return 0
+            if fdint == fdintCOPY_FILE:
+                names.append(_to_text(notify.psz1))
+                return 0
+            return -1
+
+        self._fdicopy_native(callback)
+        return iter(names)
 
     def members(self) -> Iterator[CabinetInfo]:
         return iter(self._archive.infolist())
