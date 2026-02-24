@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cabfile"
+version = "2.0.0pre1"
+description = "Windows cabinet (.cab) file reader"
+readme = "README.rst"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Kristján Valur Jónsson", email = "sweskman@gmail.com" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: Microsoft :: Windows",
+  "Topic :: System :: Archiving",
+]
+keywords = ["cab", "cabinet", "archiving", "windows"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://bitbucket.org/krisvale/pycabinet/"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cabfile"]
+
+[tool.uv]
+dev-dependencies = [
+  "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
