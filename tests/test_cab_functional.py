@@ -18,7 +18,8 @@ def test_generated_cab_list_and_read(sample_single_cab: Path):
         names = list(archive)
         assert names == ["hello.txt"]
 
-        payload = archive.read("hello.txt")
+        member, payload = archive.read("hello.txt")
+        assert member.name == "hello.txt"
         assert payload == b"hello from cabfile\n"
 
 
@@ -29,7 +30,9 @@ def test_generated_cab_extract(sample_multi_cab: Path, tmp_path: Path):
 
     archive = cabfile.CabFile(str(cab_path))
     with archive:
-        archive.extract_all(str(out_dir))
+        extracted = list(archive.extract_all(str(out_dir)))
+
+    assert [member.name for member in extracted] == ["alpha.txt", "beta.txt", "gamma.txt"]
 
     assert (out_dir / "alpha.txt").read_bytes() == b"alpha\n"
     assert (out_dir / "beta.txt").read_bytes() == b"beta\n"
@@ -53,7 +56,14 @@ def test_infolist_getinfo_and_multi_read(sample_multi_cab: Path):
         assert "missing.txt" not in archive
 
         payloads = list(archive.read_many(["alpha.txt", "beta.txt", "gamma.txt"]))
-        assert payloads == [
+        assert [(member.name, data) for member, data in payloads] == [
+            ("alpha.txt", b"alpha\n"),
+            ("beta.txt", b"beta\n"),
+            ("gamma.txt", b"gamma\n"),
+        ]
+
+        all_payloads = list(archive.read_all())
+        assert [(member.name, data) for member, data in all_payloads] == [
             ("alpha.txt", b"alpha\n"),
             ("beta.txt", b"beta\n"),
             ("gamma.txt", b"gamma\n"),
@@ -67,7 +77,9 @@ def test_extract_selected_names_only(sample_multi_cab: Path, tmp_path: Path):
 
     archive = cabfile.CabFile(str(cab_path))
     with archive:
-        archive.extract_all(str(out_dir), members=["beta.txt"])
+        extracted = list(archive.extract_all(str(out_dir), members=["beta.txt"]))
+
+    assert [member.name for member in extracted] == ["beta.txt"]
 
     assert not (out_dir / "alpha.txt").exists()
     assert (out_dir / "beta.txt").read_bytes() == b"beta\n"
@@ -81,7 +93,9 @@ def test_file_object_inputs_and_testcabinet(sample_single_cab: Path):
         archive = cabfile.CabFile(file_obj)
         with archive:
             assert list(archive) == ["hello.txt"]
-            assert archive.read("hello.txt") == b"hello from cabfile\n"
+            member, payload = archive.read("hello.txt")
+            assert member.name == "hello.txt"
+            assert payload == b"hello from cabfile\n"
             assert archive.test() is True
 
 

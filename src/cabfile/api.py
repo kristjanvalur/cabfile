@@ -241,12 +241,12 @@ class CabFile:
         self.visit(on_copy_file)
         return items
 
-    def read(self, name: str) -> bytes:
+    def read(self, name: str) -> tuple[CabMember, bytes]:
         """Read a single member payload by name.
 
         Raises ``KeyError`` when the member is not present.
         """
-        payload: bytes | None = None
+        result: tuple[CabMember, bytes] | None = None
 
         def on_copy_file(member: CabMember):
             if member.name != name:
@@ -255,55 +255,69 @@ class CabFile:
             sink = BytesIO()
 
             def on_done() -> None:
-                nonlocal payload
-                payload = sink.getvalue()
+                nonlocal result
+                result = (member, sink.getvalue())
                 sink.close()
                 raise CabStopIteration()
 
             return sink, on_done
 
         self.visit(on_copy_file)
-        if payload is None:
+        if result is None:
             raise KeyError(name)
-        return payload
+        return result
 
-    def read_many(self, names: Iterable[str]) -> Iterator[tuple[str, bytes]]:
-        """Yield ``(name, payload)`` for requested names that exist.
+    def read_many(self, names: Iterable[str]) -> Iterator[tuple[CabMember, bytes]]:
+        """Yield ``(member, payload)`` for requested names that exist.
 
-        Output preserves the caller-provided ``names`` ordering.
+        Output follows cabinet traversal order.
         """
-        requested_names = list(names)
-        if not requested_names:
+        requested_set = set(names)
+        if not requested_set:
             return iter(())
 
-        requested_set = set(requested_names)
-        by_name: dict[str, bytes] = {}
+        entries: list[tuple[CabMember, bytes]] = []
 
         def on_copy_file(member: CabMember):
             if member.name is None or member.name not in requested_set:
                 return None
 
             sink = BytesIO()
-            member_name = member.name
 
             def on_done() -> None:
-                by_name[member_name] = sink.getvalue()
+                entries.append((member, sink.getvalue()))
                 sink.close()
 
             return sink, on_done
 
         self.visit(on_copy_file)
 
-        return iter((name, by_name[name]) for name in requested_names if name in by_name)
+        return iter(entries)
 
-    def extract(self, name: str, target_dir: CabTargetDir) -> None:
+    def read_all(self) -> Iterator[tuple[CabMember, bytes]]:
+        """Yield ``(member, payload)`` for all members in cabinet order."""
+        entries: list[tuple[CabMember, bytes]] = []
+
+        def on_copy_file(member: CabMember):
+            sink = BytesIO()
+
+            def on_done() -> None:
+                entries.append((member, sink.getvalue()))
+                sink.close()
+
+            return sink, on_done
+
+        self.visit(on_copy_file)
+        return iter(entries)
+
+    def extract(self, name: str, target_dir: CabTargetDir) -> CabMember:
         """Extract one member to ``target_dir``.
 
         Raises ``KeyError`` when the member is not present.
         """
         out_dir = Path(target_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        wrote = False
+        extracted: CabMember | None = None
 
         def on_copy_file(member: CabMember):
             if member.name != name:
@@ -314,22 +328,24 @@ class CabFile:
             output_file = destination.open("wb")
 
             def on_done() -> None:
-                nonlocal wrote
-                wrote = True
+                nonlocal extracted
+                extracted = member
                 output_file.close()
                 raise CabStopIteration()
 
             return output_file, on_done
 
         self.visit(on_copy_file)
-        if not wrote:
+        if extracted is None:
             raise KeyError(name)
+        return extracted
 
-    def extract_all(self, target_dir: CabTargetDir, members: Iterable[str] | None = None) -> None:
-        """Extract all members, or only the selected ``members``, to ``target_dir``."""
+    def extract_all(self, target_dir: CabTargetDir, members: Iterable[str] | None = None) -> Iterable[CabMember]:
+        """Extract all members, or only selected ``members``, and return extracted metadata."""
         out_dir = Path(target_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         selected = set(members) if members is not None else None
+        extracted_members: list[CabMember] = []
 
         def on_copy_file(member: CabMember):
             if member.name is None:
@@ -342,11 +358,13 @@ class CabFile:
             output_file = destination.open("wb")
 
             def on_done() -> None:
+                extracted_members.append(member)
                 output_file.close()
 
             return output_file, on_done
 
         self.visit(on_copy_file)
+        return iter(extracted_members)
 
     def test(self) -> bool:
         """Test cabinet readability by copying all member data to a null sink."""

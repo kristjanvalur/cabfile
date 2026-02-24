@@ -14,7 +14,9 @@ pytestmark = pytest.mark.requires_makecab
 def test_cabfile_context_manager_and_read(sample_single_cab: Path):
     with cabfile.CabFile(str(sample_single_cab)) as archive:
         assert list(archive) == ["hello.txt"]
-        assert archive.read("hello.txt") == b"hello from cabfile\n"
+        read_member, payload = archive.read("hello.txt")
+        assert read_member.name == "hello.txt"
+        assert payload == b"hello from cabfile\n"
         member = archive["hello.txt"]
         assert member is not None
         assert member.file_size == len(b"hello from cabfile\n")
@@ -27,8 +29,16 @@ def test_cabfile_members_and_read_many(sample_multi_cab: Path):
         assert [item.filename for item in members] == ["alpha.txt", "beta.txt", "gamma.txt"]
         assert [item.size for item in members] == [len(b"alpha\n"), len(b"beta\n"), len(b"gamma\n")]
         assert [item.file_size for item in members] == [len(b"alpha\n"), len(b"beta\n"), len(b"gamma\n")]
-        assert list(archive.read_many(["alpha.txt", "gamma.txt"])) == [
+        read_many = list(archive.read_many(["alpha.txt", "gamma.txt"]))
+        assert [(member.name, data) for member, data in read_many] == [
             ("alpha.txt", b"alpha\n"),
+            ("gamma.txt", b"gamma\n"),
+        ]
+
+        read_all = list(archive.read_all())
+        assert [(member.name, data) for member, data in read_all] == [
+            ("alpha.txt", b"alpha\n"),
+            ("beta.txt", b"beta\n"),
             ("gamma.txt", b"gamma\n"),
         ]
         assert archive.test() is True
@@ -39,8 +49,11 @@ def test_cabfile_extract_and_extract_all(sample_multi_cab: Path, tmp_path: Path)
     all_out = tmp_path / "all"
 
     with cabfile.CabFile(str(sample_multi_cab)) as archive:
-        archive.extract("beta.txt", str(selected_out))
-        archive.extract_all(str(all_out), members=["alpha.txt", "gamma.txt"])
+        extracted_one = archive.extract("beta.txt", str(selected_out))
+        extracted_many = list(archive.extract_all(str(all_out), members=["alpha.txt", "gamma.txt"]))
+
+    assert extracted_one.name == "beta.txt"
+    assert [member.name for member in extracted_many] == ["alpha.txt", "gamma.txt"]
 
     assert not (selected_out / "alpha.txt").exists()
     assert (selected_out / "beta.txt").read_bytes() == b"beta\n"
