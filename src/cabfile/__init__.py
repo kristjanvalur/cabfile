@@ -1,4 +1,5 @@
 from .api import (
+    CabFile,
     CabFileError,
     CabPlatformError,
     CabinetError,
@@ -12,6 +13,7 @@ from .api import (
 __all__ = [
     "CabinetError",
     "CabFileError",
+    "CabFile",
     "CabPlatformError",
     "CabinetFile",
     "CabinetInfo",
