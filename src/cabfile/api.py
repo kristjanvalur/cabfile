@@ -27,7 +27,7 @@ from .core import (
     is_cabinetfile,
     main,
 )
-from .errors import CabFileError, CabPlatformError, CabinetError
+from .errors import CabFileError, CabPlatformError, CabStopIteration, CabinetError
 from .models import CabMember, CabinetInfo, DecodeFATTime
 
 CabSource = str | PathLike[str] | BinaryIO
@@ -68,7 +68,7 @@ class CabFile:
             self._f.open,
             self._f.read,
             self._f.write,
-            self._f.close,
+            self._f.close_cb,
             self._f.seek,
             0,
             byref(self._e),
@@ -93,15 +93,18 @@ class CabFile:
 
         self._e.clear()
         notify_callback = PFNFDINOTIFY(wrap)
-        result = FDICopy(self._hfdi, self._tail, self._head, 0, notify_callback, None, None)
-        if not result:
-            if excinfo:
-                raise excinfo[1]
-            self._f.raise_error()
-            if err_success is not None and err_success():
-                return result
-            self._e.raise_error()
-        return result
+        try:
+            result = FDICopy(self._hfdi, self._tail, self._head, 0, notify_callback, None, None)
+            if not result:
+                if excinfo:
+                    raise excinfo[1]
+                self._f.raise_error()
+                if err_success is not None and err_success():
+                    return result
+                self._e.raise_error()
+            return result
+        finally:
+            self._f.close()
 
     def __enter__(self) -> Self:
         return self
@@ -122,15 +125,12 @@ class CabFile:
     def close(self) -> None:
         self._close_native()
 
-    def _fdicopy_visit_native(
+    def _fdicopy_dispatch(
         self,
-        callback: Callable[[CabMember, bytes | None], bool | None],
-        *,
-        with_data: bool,
-        select: Callable[[CabMember], bool] | None = None,
+        on_copy_file: Callable[[CabMember], tuple[int, Callable[[], None]] | None],
     ) -> bool:
         aborted = False
-        pending: dict[int, tuple[CabMember, BytesIO]] = {}
+        pending: dict[int, Callable[[], None]] = {}
 
         def on_notify(fdint, pnotify):
             nonlocal aborted
@@ -142,30 +142,27 @@ class CabFile:
                 member.file_size = notify.cb
                 member.external_attr = notify.attribs
 
-                if select is not None and not select(member):
+                try:
+                    result = on_copy_file(member)
+                except CabStopIteration:
+                    aborted = True
+                    return -1
+
+                if result is None:
                     return 0
 
-                if not with_data:
-                    if callback(member, None) is False:
-                        aborted = True
-                        return -1
-                    return 0
-
-                sink = BytesIO()
-                fd = self._f.map(sink)
-                pending[fd] = (member, sink)
+                fd, on_close_file = result
+                pending[int(fd)] = on_close_file
                 return fd
 
             if fdint == fdintCLOSE_FILE_INFO:
                 fd = int(notify.hf)
-                member_sink = pending.pop(fd, None)
-                if member_sink is None:
+                on_close_file = pending.pop(fd, None)
+                if on_close_file is None:
                     return 1
-                member, sink = member_sink
-                self._f.unmap(fd)
-                data = sink.getvalue()
-                sink.close()
-                if callback(member, data) is False:
+                try:
+                    on_close_file()
+                except CabStopIteration:
                     aborted = True
                     return -1
                 return 1
@@ -173,6 +170,36 @@ class CabFile:
 
         self._fdicopy_native(on_notify, err_success=lambda: aborted)
         return not aborted
+
+    def _fdicopy_visit_native(
+        self,
+        callback: Callable[[CabMember, bytes | None], bool | None],
+        *,
+        with_data: bool,
+        predicate: Callable[[CabMember], bool] | None = None,
+    ) -> bool:
+        def on_copy_file(member: CabMember):
+            if predicate is not None and not predicate(member):
+                return None
+
+            if not with_data:
+                if callback(member, None) is False:
+                    raise CabStopIteration()
+                return None
+
+            sink = BytesIO()
+            fd = self._f.map(sink)
+
+            def on_close_file() -> None:
+                mapped_sink = self._f.unmap(fd)
+                data = mapped_sink.getvalue()
+                mapped_sink.close()
+                if callback(member, data) is False:
+                    raise CabStopIteration()
+
+            return fd, on_close_file
+
+        return self._fdicopy_dispatch(on_copy_file)
 
     def visit(
         self,
@@ -209,7 +236,7 @@ class CabFile:
         self._fdicopy_visit_native(
             callback,
             with_data=False,
-            select=lambda member: member.name == name,
+            predicate=lambda member: member.name == name,
         )
         return found
 
@@ -224,7 +251,7 @@ class CabFile:
         self._fdicopy_visit_native(
             callback,
             with_data=False,
-            select=lambda current: current.name == name,
+            predicate=lambda current: current.name == name,
         )
         if member is None:
             raise KeyError(name)
@@ -273,7 +300,7 @@ class CabFile:
         self._fdicopy_visit_native(
             callback,
             with_data=True,
-            select=lambda member: member.name == name,
+            predicate=lambda member: member.name == name,
         )
         if payload is None:
             raise KeyError(name)
@@ -295,7 +322,7 @@ class CabFile:
         self._fdicopy_visit_native(
             callback,
             with_data=True,
-            select=lambda member: member.name in requested_set,
+            predicate=lambda member: member.name in requested_set,
         )
 
         return iter((name, by_name[name]) for name in requested_names if name in by_name)
@@ -318,7 +345,7 @@ class CabFile:
         self._fdicopy_visit_native(
             callback,
             with_data=True,
-            select=lambda member: member.name == name,
+            predicate=lambda member: member.name == name,
         )
         if not wrote:
             raise KeyError(name)
@@ -339,7 +366,7 @@ class CabFile:
         self._fdicopy_visit_native(
             callback,
             with_data=True,
-            select=None if selected is None else (lambda member: member.name in selected),
+            predicate=None if selected is None else (lambda member: member.name in selected),
         )
 
     def test(self) -> bool:
@@ -350,6 +377,7 @@ __all__ = [
     "CabFileError",
     "CabFile",
     "CabPlatformError",
+    "CabStopIteration",
     "CabinetFile",
     "CabinetInfo",
     "DecodeFATTime",

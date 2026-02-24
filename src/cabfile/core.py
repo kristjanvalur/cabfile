@@ -314,7 +314,26 @@ class FDIFileManager(object):
         self.read =  PFNREAD(self.pyread)
         self.write = PFNWRITE(self.pywrite)
         self.seek =  PFNSEEK(self.pylseek)
-        self.close = PFNCLOSE(self.pyclose)
+        self.close_cb = PFNCLOSE(self.pyclose)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
+    def close(self):
+        errors = []
+        for fd, fobj in list(self.filemap.items()):
+            try:
+                fobj.close()
+            except BaseException as e:
+                errors.append(e)
+            finally:
+                self.filemap.pop(fd, None)
+        if errors:
+            raise errors[0]
 
     def raise_error(self):
         tmp = self._excinfo
@@ -428,7 +447,7 @@ def is_cabinetfile(filename):
         fileobj = open(filename, "rb")
     fd = f.map(fileobj)
         
-    hfdi = FDICreate(a.malloc, a.free, f.open, f.read, f.write, f.close, f.seek, 0, byref(e))
+    hfdi = FDICreate(a.malloc, a.free, f.open, f.read, f.write, f.close_cb, f.seek, 0, byref(e))
     try:
         if FDIIsCabinet(hfdi, fd, byref(ci)):
             return ci
@@ -458,7 +477,7 @@ class CabinetFile(object):
             self.tail = self.tail.encode(sys.getfilesystemencoding(), errors="surrogateescape")
             
         self.hfdi = FDICreate(self.a.malloc, self.a.free,
-                              self.f.open, self.f.read, self.f.write, self.f.close, self.f.seek,
+                              self.f.open, self.f.read, self.f.write, self.f.close_cb, self.f.seek,
                               0, byref(self.e))
 
     def __del__(self):
@@ -484,13 +503,16 @@ class CabinetFile(object):
 
         self.e.clear()
         notify_callback = PFNFDINOTIFY(wrap)
-        r = FDICopy(self.hfdi, self.tail, self.head, 0, notify_callback, None, None)
-        if not r:
-            if excinfo:
-                raise excinfo[1]
-            self.f.raise_error() #maybe it is a filer error
-            self.e.raise_error() #or an error in the error state
-        return r
+        try:
+            r = FDICopy(self.hfdi, self.tail, self.head, 0, notify_callback, None, None)
+            if not r:
+                if excinfo:
+                    raise excinfo[1]
+                self.f.raise_error() #maybe it is a filer error
+                self.e.raise_error() #or an error in the error state
+            return r
+        finally:
+            self.f.close()
 
     def namelist(self):
         """Return a list of file names in the archive."""
