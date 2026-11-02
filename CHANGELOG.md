@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+- Declare and test support for Python 3.11–3.15 (added 3.14 and 3.15 classifiers; CI now covers every version).
+
 ## 2.0.0 - 2026-02-24
 
 ### Release
