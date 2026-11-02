@@ -14,8 +14,8 @@ The modern API is centered on `CabFile` and two helpers:
 import cabfile
 
 with cabfile.CabFile("archive.cab") as cab:
-        print(cab.namelist())
-        payload = cab.read("hello.txt")
+    print(cab.namelist())
+    payload = cab.read("hello.txt")
 
 print(cabfile.is_cabinet("archive.cab"))
 summary = cabfile.probe("archive.cab")

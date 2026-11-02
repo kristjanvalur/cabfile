@@ -54,3 +54,7 @@ pythonpath = ["src"]
 markers = [
   "requires_makecab: tests that require makecab.exe to generate CAB fixtures",
 ]
+
+[tool.ruff.lint]
+# Pin ruff's pre-0.17 default rule set; CI runs ruff unpinned.
+select = ["E4", "E7", "E9", "F"]
